@@ -120,3 +120,4 @@ fabric.properties
 Rocket.toml
 vapid_key.pem
 /media
+.DS_Store
