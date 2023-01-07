@@ -249,6 +249,8 @@ Only image uploads are currently supported, videos and audio will result in a HT
 ### search
 - [x] GET /api/v2/search 
 
+Search currently only handles accounts, hashtags and statuses are always empty.
+
 ### instance
 - [x] GET /api/v2/instance
 - [x] GET /api/v1/instance
@@ -272,3 +274,7 @@ Only image uploads are currently supported, videos and audio will result in a HT
 
 ### oembed 
 - [ ] GET /api/oembed
+
+### admin
+
+No admin API endpoint is currently implemented.
