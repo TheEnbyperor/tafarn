@@ -1,0 +1,68 @@
+[package]
+name = "tafarn"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "tafarn"
+path = "src/lib.rs"
+
+[[bin]]
+name = "frontend"
+path = "src/bin/frontend.rs"
+
+[[bin]]
+name = "tasks"
+path = "src/bin/tasks.rs"
+
+[[bin]]
+name = "tafarnctl"
+path = "src/bin/tafarnctl.rs"
+
+[dependencies]
+rocket = { version = "0.5.0-rc.2", features = ["secrets", "json"] }
+rocket_sync_db_pools = { version = "0.1.0-rc.2", features = ["diesel_postgres_pool"] }
+rocket_dyn_templates = { version = "0.1.0-rc.2", features = ["tera"] }
+celery = "0.4.0-rcn.11"
+tokio = { version = "1", features = ["fs", "sync", "parking_lot"] }
+log = "0.4"
+pretty_env_logger = "0.4"
+serde = "1"
+serde_json = "1"
+openidconnect = "2"
+diesel = { version = "1", features = ["postgres", "uuidv07", "extras"] }
+diesel_migrations = "1"
+diesel-derive-enum = { version = "1", features = ["postgres"] }
+uuid = { version = "0.8", features = ["serde", "v4"] }
+chrono = "0.4"
+time = "0.3"
+base64 = "0.13"
+rand = "0.8"
+phf = { version = "0.11", features = ["macros"] }
+url = "2"
+rocket-basicauth = "2"
+jwt-simple = "0.10"
+web-push = "0.9"
+pkcs8 = "0.7"
+p256 = "0.10"
+lazy_static = "1"
+reqwest = { version = "0.11", features = ["json", "trust-dns"] }
+r2d2 = "0.8"
+md5 = "0.7"
+sha1 = "0.10"
+sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+itertools = "0.10"
+backoff = { version = "0.4", features = ["futures", "tokio"] }
+openssl = "0.10"
+regex = "1"
+image = "0.24"
+percent-encoding = "2"
+blurhash = "0.1"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+panic = "abort"

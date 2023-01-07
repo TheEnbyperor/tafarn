@@ -1,0 +1,1 @@
+ALTER TABLE following DROP COLUMN pending;

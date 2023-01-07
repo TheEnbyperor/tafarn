@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="robots" content="noindex, nofollow">
+
+    <title>Tafarn</title>
+    <link rel="stylesheet" href="https://as207960.net/assets/css/bootstrap.css">
+
+    <style>
+        body {
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(270deg, #319795, #2a4365, #3182ce);
+        }
+
+        .login {
+            max-width: 95%;
+            width: 750px;
+        }
+
+        .login h1 {
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="bg-login-gradient">
+<div class="card my-4 login">
+    <div class="card-body">
+        <h1 class="display-4">Tafarn</h1>
+        {% block content %}{% endblock %}
+    </div>
+</div>
+</body>
+</html>

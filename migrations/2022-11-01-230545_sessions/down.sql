@@ -1,0 +1,1 @@
+DROP TABLE session;-- This file should undo anything in `up.sql`
