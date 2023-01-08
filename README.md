@@ -44,6 +44,7 @@ or `given_name` claim, if `preferred_username` is not available.
 - Undo follow
 - Update Person/Service/Organization/Application/Group
 - Create note
+- Announce note
 
 ### Events the server can send
 - Accept follow
@@ -160,9 +161,9 @@ or `given_name` claim, if `preferred_username` is not available.
 
 ### statuses
 - [ ] POST /api/v1/statuses
-- [ ] GET /api/v1/statuses/:id
+- [x] GET /api/v1/statuses/:id
 - [ ] DELETE /api/v1/statuses/:id
-- [ ] GET /api/v1/statuses/:id/context
+- [x] GET /api/v1/statuses/:id/context
 - [ ] GET /api/v1/statuses/:id/reblogged_by
 - [ ] GET /api/v1/statuses/:id/favourited_by
 - [ ] POST /api/v1/statuses/:id/favourite
@@ -196,9 +197,9 @@ Only image uploads are currently supported, videos and audio will result in a HT
 - [ ] DELETE /api/v1/scheduled_statuses/:id
 
 ### timelines
-- [ ] GET /api/v1/timelines/public
+- [x] GET /api/v1/timelines/public
 - [ ] GET /api/v1/timelines/tag/:hashtag
-- [ ] GET /api/v1/timelines/home
+- [x] GET /api/v1/timelines/home
 - [ ] GET /api/v1/timelines/list/:list_id
 - [ ] GET /api/v1/timelines/direct
 
@@ -277,5 +278,4 @@ Search currently only handles accounts, hashtags and statuses are always empty.
 - [ ] GET /api/oembed
 
 ### admin
-
 No admin API endpoint is currently implemented.

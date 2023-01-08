@@ -37,8 +37,8 @@ pub enum ReferenceOrObject<T> {
     Object(Box<T>),
 }
 
-impl<T: ObjectID> ReferenceOrObject<T> {
-    pub fn id(&self) -> Option<&str> {
+impl<T: ObjectID> ObjectID for ReferenceOrObject<T> {
+    fn id(&self) -> Option<&str> {
         match self {
             ReferenceOrObject::Object(o) => o.id(),
             ReferenceOrObject::Reference(r) => Some(r),

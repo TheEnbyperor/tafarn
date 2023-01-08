@@ -24,8 +24,10 @@ pub struct Account {
     pub suspended: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limited: Option<bool>,
+    #[serde(serialize_with = "serialize_timestamp")]
     pub created_at: DateTime<Utc>,
-    pub last_status_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "serialize_date_opt")]
+    pub last_status_at: Option<NaiveDate>,
     pub statuses_count: u64,
     pub followers_count: u64,
     pub following_count: u64,
@@ -52,6 +54,7 @@ pub struct AccountSource {
 pub struct Field {
     pub name: String,
     pub value: String,
+    #[serde(serialize_with = "serialize_timestamp_opt")]
     pub verified_at: Option<DateTime<Utc>>,
 }
 
@@ -243,6 +246,7 @@ pub struct Notification {
     pub id: String,
     #[serde(rename = "type")]
     pub notification_type: String,
+    #[serde(serialize_with = "serialize_timestamp")]
     pub created_at: DateTime<Utc>,
     pub account: Account,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -252,7 +256,75 @@ pub struct Notification {
 }
 
 #[derive(Serialize)]
-pub struct Status {}
+pub struct Status {
+    pub id: String,
+    pub uri: String,
+    #[serde(serialize_with = "serialize_timestamp")]
+    pub created_at: DateTime<Utc>,
+    pub account: Account,
+    pub content: String,
+    pub visibility: StatusVisibility,
+    pub sensitive: bool,
+    pub spoiler_text: String,
+    pub media_attachments: Vec<MediaAttachment>,
+    pub mentions: Vec<StatusMention>,
+    pub tags: Vec<StatusTag>,
+    pub emojis: Vec<Emoji>,
+    pub reblogs_count: u64,
+    pub favourites_count: u64,
+    pub replies_count: u64,
+    pub url: Option<String>,
+    pub in_reply_to_id: Option<String>,
+    pub in_reply_to_account_id: Option<String>,
+    pub reblog: Option<Box<Status>>,
+    pub poll: Option<Poll>,
+    pub card: Option<PreviewCard>,
+    pub language: Option<String>,
+    #[serde(serialize_with = "serialize_timestamp_opt")]
+    pub edited_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favourited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reblogged: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub muted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bookmarked: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub enum StatusVisibility {
+    #[serde(rename = "public")]
+    Public,
+    #[serde(rename = "unlisted")]
+    Unlisted,
+    #[serde(rename = "private")]
+    Private,
+    #[serde(rename = "direct")]
+    Direct,
+}
+
+#[derive(Serialize)]
+pub struct StatusMention {
+    pub id: String,
+    pub username: String,
+    pub url: String,
+    pub acct: String,
+}
+
+#[derive(Serialize)]
+pub struct StatusTag {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Serialize)]
+pub struct Context {
+    pub ancestors: Vec<Status>,
+    pub descendants: Vec<Status>,
+}
 
 #[derive(Serialize)]
 pub struct Report {}
@@ -387,4 +459,80 @@ pub struct MediaAttachmentMeta {
 pub struct MediaAttachmentMetaFocus {
     pub x: f64,
     pub y: f64,
+}
+
+#[derive(Serialize)]
+pub struct Poll {
+    pub id: String,
+    #[serde(serialize_with = "serialize_timestamp_opt")]
+    pub expires_at: Option<DateTime<Utc>>,
+    pub expired: bool,
+    pub multiple: bool,
+    pub votes_count: u64,
+    pub voters_count: Option<u64>,
+    pub options: Vec<PollOption>,
+    pub emojis: Vec<Emoji>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub own_votes: Option<Vec<u64>>,
+}
+
+#[derive(Serialize)]
+pub struct PollOption {
+    pub title: String,
+    pub votes_count: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct PreviewCard {
+    pub url: String,
+    pub title: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub card_type: PreviewCardType,
+    pub author_name: String,
+    pub author_url: String,
+    pub provider_name: String,
+    pub provider_url: String,
+    pub html: String,
+    pub width: u64,
+    pub height: u64,
+    pub image: Option<String>,
+    pub embed_url: String,
+    pub blurhash: Option<String>,
+}
+
+#[derive(Serialize)]
+pub enum PreviewCardType {
+    #[serde(rename = "link")]
+    Link,
+    #[serde(rename = "photo")]
+    Photo,
+    #[serde(rename = "video")]
+    Video,
+    #[serde(rename = "rich")]
+    Rich,
+}
+
+fn serialize_timestamp<S: serde::Serializer,>(timestamp: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(timestamp.to_rfc3339_opts(SecondsFormat::Millis, true).as_str())
+}
+
+fn serialize_timestamp_opt<S: serde::Serializer,>(timestamp: &Option<DateTime<Utc>>, s: S) -> Result<S::Ok, S::Error> {
+    match timestamp {
+        Some(timestamp) => s.serialize_str(
+            timestamp.to_rfc3339_opts(SecondsFormat::Millis, true).as_str()
+        ),
+        None => s.serialize_none(),
+    }
+}
+
+fn serialize_date_opt<S: serde::Serializer,>(date: &Option<NaiveDate>, s: S) -> Result<S::Ok, S::Error> {
+    match date {
+        Some(date) => s.serialize_str(
+            date.format("%Y-%m-%d").to_string().as_str()
+        ),
+        None => s.serialize_none(),
+    }
 }

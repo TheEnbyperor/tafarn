@@ -128,6 +128,7 @@ pub async fn setup() -> App {
             tasks::notifications::deliver_notification,
 
             tasks::statuses::create_status,
+            tasks::statuses::create_announce,
             tasks::statuses::insert_into_timelines,
         ],
         task_routes = [],

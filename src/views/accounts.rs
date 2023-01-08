@@ -143,7 +143,7 @@ pub async fn render_account(
     };
 
     Ok(super::objs::Account {
-        id: account.id.to_string(),
+        id: account.iid.to_string(),
         username: account.username.clone(),
         acct: match domain {
             Some(d) => format!("{}@{}", account.username, d),
@@ -381,21 +381,29 @@ pub async fn update_credentials(
     Ok(rocket::serde::json::Json(render_account(config, &db, account).await?))
 }
 
-#[get("/api/v1/accounts/<account_id>")]
-pub async fn account(
-    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String
-) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
+async fn get_account_from_db(account_id: &str, db: &crate::DbConn) -> Result<crate::models::Account, rocket::http::Status> {
+    let account_id = match account_id.parse::<i32>() {
         Ok(id) => id,
         Err(_) => return Err(rocket::http::Status::NotFound)
     };
 
-    let account: crate::models::Account = match crate::db_run(&db, move |c| -> QueryResult<_> {
-        crate::schema::accounts::dsl::accounts.find(&account_id).get_result(c).optional()
+    let account: crate::models::Account = match crate::db_run(db, move |c| -> QueryResult<_> {
+        crate::schema::accounts::dsl::accounts.filter(
+            crate::schema::accounts::dsl::iid.eq(account_id)
+        ).get_result(c).optional()
     }).await? {
         Some(a) => a,
         None => return Err(rocket::http::Status::NotFound)
     };
+
+    Ok(account)
+}
+
+#[get("/api/v1/accounts/<account_id>")]
+pub async fn account(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String
+) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
+    let account = get_account_from_db(&account_id, &db).await?;
 
     Ok(rocket::serde::json::Json(render_account(config, &db, account).await?))
 }
@@ -406,7 +414,7 @@ pub async fn account_statuses(
     limit: Option<u64>, exclude_replies: Option<&str>, only_media: Option<&str>,
     exclude_reblogs: Option<&str>, pinned: Option<&str>
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::Status>>, rocket::http::Status> {
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
+    let account_id = match account_id.parse::<i32>() {
         Ok(id) => id,
         Err(_) => return Err(rocket::http::Status::NotFound)
     };
@@ -424,22 +432,13 @@ pub async fn account_followers(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
     limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, rocket::http::Status> {
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
-        Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
-    };
+    let account = get_account_from_db(&account_id, &db).await?;
 
     let limit = limit.unwrap_or(40);
-    if limit > 100 {
+    if limit > 500 {
         return Err(rocket::http::Status::BadRequest);
     }
 
-    let account: crate::models::Account = match crate::db_run(&db, move |c| -> QueryResult<_> {
-        crate::schema::accounts::dsl::accounts.find(&account_id).get_result(c).optional()
-    }).await? {
-        Some(a) => a,
-        None => return Err(rocket::http::Status::NotFound)
-    };
     let followers: Vec<crate::models::Account> = crate::db_run(&db, move |c| -> QueryResult<_> {
         let mut sel = crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::id.eq_any(
@@ -464,16 +463,14 @@ pub async fn account_followers(
     if let Some(last_id) = followers.first().map(|a| a.iid) {
         links.push(super::Link {
             rel: "next".to_string(),
-            href: format!("https://{}/api/v1/accounts/{}/followers?min_id={}&limit={}", host.to_string(), account_id, last_id, limit)
+            href: format!("https://{}/api/v1/accounts/{}/followers?min_id={}", host.to_string(), account_id, last_id)
         });
     }
     if let Some(first_id) = followers.last().map(|a| a.iid) {
-        if followers.len() == limit as usize {
-            links.push(super::Link {
-                rel: "prev".to_string(),
-                href: format!("https://{}/api/v1/accounts/{}/followers?max_id={}&limit={}", host.to_string(), account_id, first_id, limit)
-            });
-        }
+        links.push(super::Link {
+            rel: "prev".to_string(),
+            href: format!("https://{}/api/v1/accounts/{}/followers?max_id={}", host.to_string(), account_id, first_id)
+        });
     }
 
     Ok(super::LinkedResponse {
@@ -489,22 +486,13 @@ pub async fn account_following(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
     limit: Option<usize>
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::Account>>, rocket::http::Status> {
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
-        Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
-    };
+    let account = get_account_from_db(&account_id, &db).await?;
 
     let limit = limit.unwrap_or(40);
-    if limit > 100 {
+    if limit > 500 {
         return Err(rocket::http::Status::BadRequest);
     }
 
-    let account: crate::models::Account = match crate::db_run(&db, move |c| -> QueryResult<_> {
-        crate::schema::accounts::dsl::accounts.find(&account_id).get_result(c).optional()
-    }).await? {
-        Some(a) => a,
-        None => return Err(rocket::http::Status::NotFound)
-    };
     let following: Vec<crate::models::Account> = crate::db_run(&db, move |c| -> QueryResult<_> {
         crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::id.eq_any(
@@ -524,17 +512,14 @@ pub async fn account_following(
 
 #[get("/api/v1/accounts/<account_id>/lists")]
 pub async fn lists(
-    _db: crate::DbConn, _config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    db: crate::DbConn, _config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
     account_id: String
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::List>>, rocket::http::Status> {
     if !user.has_scope("read:lists") {
         return Err(rocket::http::Status::Forbidden);
     }
 
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
-        Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
-    };
+    let _account = get_account_from_db(&account_id, &db).await?;
 
     Ok(rocket::serde::json::Json(vec![]))
 }
@@ -550,7 +535,7 @@ async fn render_relationship(
             ).and(
                 crate::schema::following::dsl::pending.eq(false)
             )
-        ).get_result::<crate::models::Following>(c).optional()
+        ).count().get_result::<i64>(c)
     }).await?;
     let following_pending = crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
@@ -559,7 +544,7 @@ async fn render_relationship(
             ).and(
                 crate::schema::following::dsl::pending.eq(true)
             )
-        ).get_result::<crate::models::Following>(c).optional()
+        ).count().get_result::<i64>(c)
     }).await?;
     let followed_by = crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
@@ -568,18 +553,18 @@ async fn render_relationship(
             ).and(
                 crate::schema::following::dsl::pending.eq(false)
             )
-        ).get_result::<crate::models::Following>(c).optional()
+        ).count().get_result::<i64>(c)
     }).await?;
 
     Ok(super::objs::Relationship {
         id: id.to_string(),
-        following: following.is_some(),
-        followed_by: followed_by.is_some(),
+        following: following > 0,
+        followed_by: followed_by > 0,
         blocking: false,
         blocked_by: false,
         muting: false,
         muting_notifications: false,
-        requested: following_pending.is_some(),
+        requested: following_pending > 0,
         domain_blocking: false,
         showing_reblogs: true,
         notifying: false,
@@ -599,16 +584,24 @@ pub async fn relationships(
     }
 
     let ids = match id.into_iter()
-        .map(|id| uuid::Uuid::parse_str(&id))
+        .map(|id| id.parse::<i32>())
         .collect::<Result<Vec<_>, _>>() {
         Ok(id) => id,
         Err(_) => return Err(rocket::http::Status::NotFound)
     };
 
+    let accounts = futures::stream::iter(ids.into_iter().map(|id| {
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::accounts::dsl::accounts.filter(
+                crate::schema::accounts::dsl::iid.eq(id)
+            ).first::<crate::models::Account>(c)
+        })
+    })).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?;
+
     let account = get_account(&db, &user).await?;
 
-    let relationships = futures::stream::iter(ids.into_iter())
-        .map(|id| render_relationship(&db, &account, id))
+    let relationships = futures::stream::iter(accounts.into_iter())
+        .map(|acct| render_relationship(&db, &account, acct.id))
         .buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     Ok(rocket::serde::json::Json(relationships))
@@ -681,28 +674,19 @@ pub async fn follow_account(
     }
 
     let account = get_account(&db, &user).await?;
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
-        Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
-    };
-    let followed_account: crate::models::Account = match crate::db_run(&db, move |c| -> QueryResult<_> {
-        crate::schema::accounts::dsl::accounts.find(&account_id).get_result(c).optional()
-    }).await? {
-        Some(a) => a,
-        None => return Err(rocket::http::Status::NotFound)
-    };
+    let followed_account = get_account_from_db(&account_id, &db).await?;
 
-   if crate::db_run(&db, move |c| -> QueryResult<_> {
+    if crate::db_run(&db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::follower.eq(&account.id).and(
-                crate::schema::following::dsl::followee.eq(account_id)
+                crate::schema::following::dsl::followee.eq(&followed_account.id)
             )
         ).count().get_result::<i64>(c)
     }).await? > 0 {
-        return render_relationship(&db, &account, account_id).await.map(rocket::serde::json::Json);
+        return render_relationship(&db, &account, followed_account.id).await.map(rocket::serde::json::Json);
     }
 
-    let mut relationship = render_relationship(&db, &account, account_id).await?;
+    let mut relationship = render_relationship(&db, &account, followed_account.id).await?;
     relationship.following = !followed_account.locked;
     relationship.requested = followed_account.locked;
 
@@ -714,7 +698,7 @@ pub async fn follow_account(
             crate::models::NewFollowing {
                 id: following_id.clone(),
                 follower: account.id,
-                followee: account_id,
+                followee: followed_account.id,
                 created_at: created.naive_utc(),
                 pending: true
             }

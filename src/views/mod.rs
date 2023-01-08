@@ -18,6 +18,7 @@ pub mod search;
 pub mod mutes;
 pub mod blocks;
 pub mod media;
+pub mod statuses;
 pub mod objs;
 pub mod activity_streams;
 

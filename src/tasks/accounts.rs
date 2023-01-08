@@ -278,12 +278,9 @@ async fn _update_account(
                 }).with_expected_err(|| "Unable to update account fields")
             })?;
 
-            if follow_graph {
-                let celery = super::config().celery;
-                celery.send_task(
-                    update_account_relations::new(new_account.clone(), a.followers.clone(), a.following.clone())
-                ).await.with_expected_err(|| "Unable to send task")?;
-            }
+            super::config().celery.send_task(
+                update_account_relations::new(new_account.clone(), a.followers.clone(), a.following.clone(), follow_graph)
+            ).await.with_expected_err(|| "Unable to send task")?;
 
             Ok(Some(new_account))
         }
@@ -461,7 +458,7 @@ impl<T> From<Option<T>> for NonMatchingOption<T> {
 
 #[celery::task]
 pub async fn update_account_relations(
-    account: models::Account, followers: Option<String>, following: Option<String>
+    account: models::Account, followers: Option<String>, following: Option<String>, follow_graph: bool
 ) -> TaskResult<()> {
     let mut account = account;
     let db = super::config().db.clone();
@@ -517,103 +514,105 @@ pub async fn update_account_relations(
             .execute(&con).with_expected_err(|| "Unable to update account")
     })?;
 
-    let (followers, following) = match (followers, following) {
-        (None, None) => (None, None),
-        (Some(followers), None) =>
-            (Some(followers.collect::<Vec<_>>().await), None),
-        (None, Some(following)) =>
-            (None, Some(following.collect::<Vec<_>>().await)),
-        (Some(followers), Some(following)) => {
-            let (p1, p2) = futures::future::join(followers.collect::<Vec<_>>(), following.collect::<Vec<_>>()).await;
-            (Some(p1), Some(p2))
-        },
-    };
-
-    let followers = if let Some(page) = followers {
-        let f = page.iter().filter_map(|i| i.id().map(|s| s.to_string())).collect::<Vec<_>>();
-        to_fetch.extend(page);
-        Some(f)
-    } else {
-        None
-    };
-    let following = if let Some(page) = following {
-        let f = page.iter().filter_map(|i| i.id().map(|s| s.to_string())).collect::<Vec<_>>();
-        to_fetch.extend(page);
-        Some(f)
-    } else {
-        None
-    };
-
-    tokio::task::block_in_place(|| -> TaskResult<_> {
-        let con = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-        diesel::update(crate::schema::accounts::dsl::accounts.find(account.id))
-            .set(&account)
-            .execute(&con).with_expected_err(|| "Unable to update account")
-    })?;
-
-    let to_fetch = to_fetch.into_iter()
-        .unique_by(|i| NonMatchingOption::from(
-            i.id().map(|s| s.to_string())
-        ));
-
-    let mut s = futures::stream::iter(to_fetch)
-        .map(|item| async move {
-            (item.id().map(|s| s.to_string()), find_account(item, false).await)
-        })
-        .buffer_unordered(5);
-    while let Some((id, account)) = s.next().await {
-        match account {
-            Ok(Some(account)) => if let Some(id) = id {
-                accounts.insert(id.to_string(), account);
+    if follow_graph {
+        let (followers, following) = match (followers, following) {
+            (None, None) => (None, None),
+            (Some(followers), None) =>
+                (Some(followers.collect::<Vec<_>>().await), None),
+            (None, Some(following)) =>
+                (None, Some(following.collect::<Vec<_>>().await)),
+            (Some(followers), Some(following)) => {
+                let (p1, p2) = futures::future::join(followers.collect::<Vec<_>>(), following.collect::<Vec<_>>()).await;
+                (Some(p1), Some(p2))
             },
-            Ok(None) => {
-                error!("Unable to fetch account {:?}", id);
-            },
-            Err(e) => {
-                error!("Unable to fetch account {:?}: {}", id, e);
+        };
+
+        let followers = if let Some(page) = followers {
+            let f = page.iter().filter_map(|i| i.id().map(|s| s.to_string())).collect::<Vec<_>>();
+            to_fetch.extend(page);
+            Some(f)
+        } else {
+            None
+        };
+        let following = if let Some(page) = following {
+            let f = page.iter().filter_map(|i| i.id().map(|s| s.to_string())).collect::<Vec<_>>();
+            to_fetch.extend(page);
+            Some(f)
+        } else {
+            None
+        };
+
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let con = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            diesel::update(crate::schema::accounts::dsl::accounts.find(account.id))
+                .set(&account)
+                .execute(&con).with_expected_err(|| "Unable to update account")
+        })?;
+
+        let to_fetch = to_fetch.into_iter()
+            .unique_by(|i| NonMatchingOption::from(
+                i.id().map(|s| s.to_string())
+            ));
+
+        let mut s = futures::stream::iter(to_fetch)
+            .map(|item| async move {
+                (item.id().map(|s| s.to_string()), find_account(item, false).await)
+            })
+            .buffer_unordered(5);
+        while let Some((id, account)) = s.next().await {
+            match account {
+                Ok(Some(account)) => if let Some(id) = id {
+                    accounts.insert(id.to_string(), account);
+                },
+                Ok(None) => {
+                    error!("Unable to fetch account {:?}", id);
+                },
+                Err(e) => {
+                    error!("Unable to fetch account {:?}: {}", id, e);
+                }
             }
         }
+
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let con = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+
+            if let Some(followers) = followers {
+                for follower in followers {
+                    if let Some(follower_account) = accounts.get(&follower) {
+                        diesel::insert_into(crate::schema::following::dsl::following)
+                            .values(models::NewFollowing {
+                                id: uuid::Uuid::new_v4(),
+                                follower: follower_account.id,
+                                followee: account.id,
+                                created_at: chrono::Utc::now().naive_utc(),
+                                pending: false
+                            })
+                            .on_conflict_do_nothing()
+                            .execute(&con).with_expected_err(|| "Unable to insert following")?;
+                    }
+                }
+            }
+
+            if let Some(following) = following {
+                for follow in following {
+                    if let Some(followed_account) = accounts.get(&follow) {
+                        diesel::insert_into(crate::schema::following::dsl::following)
+                            .values(models::NewFollowing {
+                                id: uuid::Uuid::new_v4(),
+                                follower: account.id,
+                                followee: followed_account.id,
+                                created_at: chrono::Utc::now().naive_utc(),
+                                pending: false
+                            })
+                            .on_conflict_do_nothing()
+                            .execute(&con).with_expected_err(|| "Unable to insert following")?;
+                    }
+                }
+            }
+
+            Ok(())
+        })?;
     }
-
-    tokio::task::block_in_place(|| -> TaskResult<_> {
-        let con = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-
-        if let Some(followers) = followers {
-            for follower in followers {
-                if let Some(follower_account) = accounts.get(&follower) {
-                    diesel::insert_into(crate::schema::following::dsl::following)
-                        .values(models::NewFollowing {
-                            id: uuid::Uuid::new_v4(),
-                            follower: follower_account.id,
-                            followee: account.id,
-                            created_at: chrono::Utc::now().naive_utc(),
-                            pending: false
-                        })
-                        .on_conflict_do_nothing()
-                        .execute(&con).with_expected_err(|| "Unable to insert following")?;
-                }
-            }
-        }
-
-        if let Some(following) = following {
-            for follow in following {
-                if let Some(followed_account) = accounts.get(&follow) {
-                    diesel::insert_into(crate::schema::following::dsl::following)
-                        .values(models::NewFollowing {
-                            id: uuid::Uuid::new_v4(),
-                            follower: account.id,
-                            followee: followed_account.id,
-                            created_at: chrono::Utc::now().naive_utc(),
-                            pending: false
-                        })
-                        .on_conflict_do_nothing()
-                        .execute(&con).with_expected_err(|| "Unable to insert following")?;
-                }
-            }
-        }
-
-        Ok(())
-    })?;
 
     Ok(())
 }

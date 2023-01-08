@@ -4,8 +4,8 @@ use celery::prelude::*;
 use diesel::prelude::*;
 use super::{resolve_object_or_link};
 
-#[celery::task]
-pub async fn process_activity(activity: activity_streams::Object, signature: activity_streams::Signature) -> TaskResult<()> {
+#[async_recursion::async_recursion]
+async fn _process_activity(activity: activity_streams::Object, signature: Option<activity_streams::Signature>) -> TaskResult<()> {
     let db = super::config().db.clone();
     match &activity {
         activity_streams::Object::Accept(a) |
@@ -43,6 +43,7 @@ pub async fn process_activity(activity: activity_streams::Object, signature: act
                     return Ok(());
                 }
             };
+            let actor_id = actor.id_or_default().to_string();
 
             let account = match super::accounts::find_account(actor, true).await? {
                 Some(a) => a,
@@ -57,23 +58,49 @@ pub async fn process_activity(activity: activity_streams::Object, signature: act
                 return Ok(());
             }
 
-            let public_key: crate::models::PublicKey = match tokio::task::block_in_place(|| -> TaskResult<_> {
-                let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-                crate::schema::public_keys::dsl::public_keys.filter(
-                    crate::schema::public_keys::dsl::key_id.eq(&signature.key_id)
-                ).get_result(&c).optional().with_expected_err(|| "Unable to fetch public key")
-            })? {
-                Some(k) => k,
-                None => {
-                    warn!("Activity \"{}\" has unknown public key \"{}\"", a.id_or_default(), signature.key_id);
+            if let Some(signature) = signature {
+                let public_key: crate::models::PublicKey = match tokio::task::block_in_place(|| -> TaskResult<_> {
+                    let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                    crate::schema::public_keys::dsl::public_keys.filter(
+                        crate::schema::public_keys::dsl::key_id.eq(&signature.key_id)
+                    ).get_result(&c).optional().with_expected_err(|| "Unable to fetch public key")
+                })? {
+                    Some(k) => k,
+                    None => {
+                        warn!("Activity \"{}\" has unknown public key \"{}\"", a.id_or_default(), signature.key_id);
+                        return Ok(());
+                    }
+                };
+                let pkey = openssl::pkey::PKey::public_key_from_pem(public_key.key.as_bytes()).with_unexpected_err(|| "Unable to parse public key")?;
+
+                if !signature.verify(&pkey) {
+                    warn!("Activity \"{}\" signature verification failed with key \"{}\"", a.id_or_default(), signature.key_id);
                     return Ok(());
                 }
-            };
-            let pkey = openssl::pkey::PKey::public_key_from_pem(public_key.key.as_bytes()).with_unexpected_err(|| "Unable to parse public key")?;
 
-            if !signature.verify(&pkey) {
-                warn!("Activity \"{}\" signature verification failed with key \"{}\"", a.id_or_default(), signature.key_id);
-                return Ok(());
+                if public_key.user_id != account.id {
+                    info!(
+                    "Activity \"{}\" has public key \"{}\" that does not belong to actor \"{}\", \
+                     fetching activity from home server to assure authenticity",
+                    a.id_or_default(), signature.key_id, actor_id
+                );
+                    match a.id() {
+                        Some(id) => {
+                            let activity = match super::fetch_object::<activity_streams::Object>(id.to_string()).await {
+                                Some(a) => a,
+                                None => {
+                                    return Ok(());
+                                }
+                            };
+                            _process_activity(activity, None).await?;
+                        },
+                        None => {
+                            warn!("Activity has no ID, cannot fetch");
+                            return Ok(());
+                        }
+                    }
+                    return Ok(());
+                }
             }
 
             let celery = super::config().celery;
@@ -86,6 +113,11 @@ pub async fn process_activity(activity: activity_streams::Object, signature: act
                     } else {
                         warn!("Create activity \"{}\" has no object", a.id_or_default());
                     }
+                }
+                activity_streams::Object::Announce(a) => {
+                    celery.send_task(
+                        super::statuses::create_announce::new(a, account)
+                    ).await.with_expected_err(|| "Unable to send task")?;
                 }
                 activity_streams::Object::Follow(a) => {
                     celery.send_task(
@@ -197,4 +229,9 @@ pub async fn process_activity(activity: activity_streams::Object, signature: act
             Ok(())
         }
     }
+}
+
+#[celery::task]
+pub async fn process_activity(activity: activity_streams::Object, signature: activity_streams::Signature) -> TaskResult<()> {
+    _process_activity(activity, Some(signature)).await
 }

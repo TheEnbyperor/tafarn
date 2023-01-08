@@ -12,7 +12,7 @@ pub async fn search(
     following: Option<&str>, resolve: Option<&str>, r#type: Option<&str>
 ) -> Result<rocket::serde::json::Json<super::objs::Search>, rocket::http::Status> {
     let limit = limit.unwrap_or(20);
-    if limit > 50 {
+    if limit > 500 {
         return Err(rocket::http::Status::BadRequest);
     }
     let following = super::parse_bool(following, false)?;

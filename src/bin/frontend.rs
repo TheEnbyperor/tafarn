@@ -140,6 +140,9 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::media::get_media,
             tafarn::views::media::update_media,
 
+            tafarn::views::statuses::get_status,
+            tafarn::views::statuses::status_context,
+
             tafarn::views::web_push::create_subscription,
             tafarn::views::web_push::get_subscription,
             tafarn::views::web_push::update_subscription,
