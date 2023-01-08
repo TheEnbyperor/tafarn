@@ -4,8 +4,6 @@ use celery::prelude::*;
 use diesel::prelude::*;
 use crate::tasks::config;
 
-const SIGNED_HEADERS: [&str; 4] = ["host", "date", "digest", "content-type"];
-
 #[celery::task]
 pub async fn deliver_object(object: activity_streams::Object, inbox: String, account: models::Account) -> TaskResult<()> {
     let config = config();
@@ -28,29 +26,8 @@ pub async fn deliver_object(object: activity_streams::Object, inbox: String, acc
         Ok(pkey) => Ok(pkey),
         Err(_) => Err(TaskError::UnexpectedError("Invalid private key".to_string())),
     }).transpose()? {
-        let mut signed_data = vec![
-            format!("(request-target): post {}", req.url().path()),
-        ];
-        for (header_name, header_value) in req.headers().iter() {
-            if SIGNED_HEADERS.iter().any(|h| header_name == h) {
-                signed_data.push(format!(
-                    "{}: {}",
-                    header_name.as_str().to_lowercase(),
-                    header_value.to_str().with_unexpected_err(|| "Unable to convert header to string")?
-                ));
-            }
-        }
-
-        let signed_data = signed_data.join("\n").into_bytes();
-        let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &pkey)
-            .with_unexpected_err(|| "Unable to create signer")?;
-        let signature = signer.sign_oneshot_to_vec(&signed_data)
-            .with_unexpected_err(|| "Unable to sign request")?;
-        req.headers_mut().insert("Signature", format!(
-            "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"(request-target) {}\",signature=\"{}\"",
-            account.key_id(&config.uri), SIGNED_HEADERS.join(" "),
-            base64::encode(signature)
-        ).parse().with_unexpected_err(|| "Unable to parse signature header")?);
+        super::sign_request(&mut req, &pkey,  account.key_id(&config.uri))
+            .map_err(|e| TaskError::UnexpectedError(e))?;
     }
 
     let r = crate::AS_CLIENT.execute(req).await

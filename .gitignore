@@ -118,6 +118,7 @@ fabric.properties
 
 /target
 Rocket.toml
+as_key.pem
 vapid_key.pem
 /media
 .DS_Store

@@ -1,5 +1,6 @@
 CREATE TABLE media (
     id UUID PRIMARY KEY NOT NULL,
+    iid SERIAL,
     media_type VARCHAR(255) NOT NULL,
     file TEXT NULL,
     content_type VARCHAR(255) NULL,
@@ -17,3 +18,5 @@ CREATE TABLE media (
     description TEXT NULL,
     owned_by TEXT NULL
 );
+
+CREATE INDEX media_iid_idx ON media (iid);

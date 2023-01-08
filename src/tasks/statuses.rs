@@ -52,7 +52,7 @@ pub async fn get_status(status: activity_streams::ReferenceOrObject<activity_str
             if let Some(status) = status {
                 Ok(status)
             } else {
-                let object: activity_streams::Object = match fetch_object(r.clone()).await {
+                let object: activity_streams::Object = match fetch_object(&r).await {
                     Some(o) => o,
                     None => return Err(TaskError::ExpectedError(format!("Error fetching object {}", r)))
                 };
@@ -166,8 +166,16 @@ async fn _update_status(
             let is_new_status = status.is_none();
             let status_id = status.as_ref().map(|s| s.id).unwrap_or_else(|| uuid::Uuid::new_v4());
             let audiences = resolve_audiences(&o, status_id).await?;
+            let in_reply_to_id = o.in_reply_to.as_ref()
+                .and_then(|r| r.id().map(|s| s.to_string()));
             let in_reply_to = match o.in_reply_to {
-                Some(irt) => Some(get_status(irt).await?),
+                Some(irt) => match get_status(irt).await {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        warn!("Error fetching in reply to status: {:?}", e);
+                        None
+                    }
+                },
                 None => None,
             };
 
@@ -206,6 +214,7 @@ async fn _update_status(
                     existing_status.public = audiences.to_public;
                     existing_status.visible = audiences.to_public || audiences.cc_public;
                     existing_status.in_reply_to_id = in_reply_to.map(|s| s.id);
+                    existing_status.in_reply_to_url = in_reply_to_id;
 
                     tokio::task::block_in_place(|| -> TaskResult<_> {
                         let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
@@ -225,7 +234,9 @@ async fn _update_status(
                         created_at: o.published.unwrap_or_else(|| Utc::now()).naive_utc(),
                         updated_at: o.updated.or(o.published).unwrap_or_else(|| Utc::now()).naive_utc(),
                         in_reply_to_id: in_reply_to.map(|s| s.id),
+                        in_reply_to_url: in_reply_to_id,
                         boot_of_id: None,
+                        boost_of_url: None,
                         sensitive: false,
                         spoiler_text: o.summary.unwrap_or_default(),
                         language: None,
@@ -306,9 +317,20 @@ pub async fn create_announce(
     let is_new_status = status.is_none();
     let status_id = status.as_ref().map(|s| s.id).unwrap_or_else(|| uuid::Uuid::new_v4());
     let audiences = resolve_audiences(&activity.common, status_id).await?;
-    let boost_of = match activity.object {
-        Some(o) => get_status(o).await?,
+    let boost_of_object = match activity.object {
+        Some(obj) => obj,
         None => return Err(TaskError::UnexpectedError(format!("Announce has no object: {:?}", activity)))
+    };
+    let boost_of_id = match boost_of_object.id() {
+        Some(o) => o.to_string(),
+        None => return Err(TaskError::UnexpectedError(format!("Announce object has no ID")))
+    };
+    let boost_of = match get_status(boost_of_object).await {
+        Ok(s) => Some(s),
+        Err(e) => {
+            warn!("Error fetching boost of status: {:?}", e);
+            None
+        }
     };
 
     let new_status = match status {
@@ -329,6 +351,9 @@ pub async fn create_announce(
                 .unwrap_or(existing_status.updated_at);
             existing_status.public = audiences.to_public;
             existing_status.visible = audiences.to_public || audiences.cc_public;
+            if let Some(obj) = boost_of {
+                existing_status.boot_of_id = Some(obj.id);
+            }
 
             tokio::task::block_in_place(|| -> TaskResult<_> {
                 let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
@@ -348,7 +373,9 @@ pub async fn create_announce(
                 created_at: activity.common.published.unwrap_or_else(|| Utc::now()).naive_utc(),
                 updated_at: activity.common.updated.or(activity.common.published).unwrap_or_else(|| Utc::now()).naive_utc(),
                 in_reply_to_id: None,
-                boot_of_id: Some(boost_of.id),
+                in_reply_to_url: None,
+                boot_of_id: boost_of.map(|s| s.id),
+                boost_of_url: Some(boost_of_id),
                 sensitive: false,
                 spoiler_text: "".to_string(),
                 language: None,
@@ -390,6 +417,60 @@ pub async fn create_announce(
     }
 
     Ok(())
+}
+
+async fn _delete_status_by_id(id: &str, account: models::Account, deleted: DateTime<Utc>) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    if let Some(mut status) = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::statuses::dsl::statuses.filter(
+            crate::schema::statuses::dsl::url.eq(id)
+        ).get_result::<models::Status>(&c).optional().with_expected_err(|| "Unable to fetch status")
+    })? {
+        if status.local {
+            warn!("Status \"{}\" is local, ignoring delete", status.id);
+            return Ok(());
+        }
+
+        if status.account_id != account.id {
+            warn!("Status \"{}\" is not owned by account \"{}\", ignoring delete", status.id, account.id);
+            return Ok(());
+        }
+
+        status.deleted_at = Some(deleted.naive_utc());
+
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            diesel::update(crate::schema::statuses::dsl::statuses.find(status.id))
+                .set(&status)
+                .execute(&c).with_expected_err(|| "Unable to update status")
+        })?;
+    }
+    Ok(())
+}
+
+#[celery::task]
+pub async fn delete_status(
+    tombstone: activity_streams::Tombstone, account: models::Account,
+) -> TaskResult<()> {
+    let id = match &tombstone.common.id {
+        Some(id) => id,
+        None => return Err(TaskError::UnexpectedError(format!("Tombstone has no ID: {:?}", tombstone)))
+    };
+    _delete_status_by_id(id.as_str(), account, tombstone.deleted.unwrap_or_else(Utc::now)).await
+}
+
+#[celery::task]
+pub async fn undo_announce(
+    activity: activity_streams::ActivityCommon, account: models::Account,
+) -> TaskResult<()> {
+    let id = match &activity.common.id {
+        Some(id) => id,
+        None => return Err(TaskError::UnexpectedError(format!("Activity has no ID: {:?}", activity)))
+    };
+    _delete_status_by_id(id.as_str(), account, activity.common.published.unwrap_or_else(Utc::now)).await
 }
 
 #[celery::task]

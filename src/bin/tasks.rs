@@ -17,6 +17,7 @@ async fn main() {
         uri: app.uri,
         vapid_key: app.vapid_key,
         web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new()),
+        as_key: std::sync::Arc::new(app.as_key),
     });
 
     info!("Tafarn task runner starting...");

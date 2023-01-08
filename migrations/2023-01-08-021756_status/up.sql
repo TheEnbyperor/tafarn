@@ -8,6 +8,8 @@ CREATE TABLE statuses (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     in_reply_to_id UUID NULL REFERENCES statuses(id) ON DELETE SET NULL,
     boot_of_id UUID NULL REFERENCES statuses(id) ON DELETE CASCADE,
+    in_reply_to_url TEXT NULL,
+    boost_of_url TEXT NULL,
     sensitive BOOLEAN NOT NULL DEFAULT FALSE,
     spoiler_text TEXT NOT NULL DEFAULT '',
     language TEXT NULL,
@@ -18,6 +20,8 @@ CREATE TABLE statuses (
     public BOOLEAN NOT NULL DEFAULT FALSE,
     visible BOOLEAN NOT NULL DEFAULT TRUE
 );
+
+CREATE INDEX statuses_iid_idx ON statuses (iid);
 
 CREATE TABLE status_media_attachments (
     status_id UUID NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,

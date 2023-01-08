@@ -38,7 +38,8 @@ async fn main() -> Result<(), rocket::Error> {
         celery: std::sync::Arc::new(app.celery_app.clone()),
         uri: app.uri,
         vapid_key: app.vapid_key,
-        web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new())
+        web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new()),
+        as_key: std::sync::Arc::new(app.as_key),
     });
 
     let _ = app.rocket
@@ -142,6 +143,7 @@ async fn main() -> Result<(), rocket::Error> {
 
             tafarn::views::statuses::get_status,
             tafarn::views::statuses::status_context,
+            tafarn::views::statuses::status_boosted_by,
 
             tafarn::views::web_push::create_subscription,
             tafarn::views::web_push::get_subscription,
@@ -155,6 +157,7 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::activity_streams::post_outbox,
             tafarn::views::activity_streams::get_shared_inbox,
             tafarn::views::activity_streams::post_shared_inbox,
+            tafarn::views::activity_streams::system_actor,
         ])
         .launch()
         .await?;

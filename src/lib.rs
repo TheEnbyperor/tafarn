@@ -71,6 +71,7 @@ pub struct Config {
     oidc: OIDCConfig,
     uri: String,
     vapid_key: std::path::PathBuf,
+    as_key: std::path::PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -89,6 +90,7 @@ pub struct AppConfig {
     pub jwt_secret: jwt_simple::algorithms::HS512Key,
     pub uri: String,
     pub web_push_signature: web_push::PartialVapidSignatureBuilder,
+    pub as_key: openssl::pkey::PKey<openssl::pkey::Private>,
 }
 
 pub struct App {
@@ -96,6 +98,7 @@ pub struct App {
     pub celery_app: CeleryApp,
     pub uri: String,
     pub vapid_key: Vec<u8>,
+    pub as_key: openssl::pkey::PKey<openssl::pkey::Private>,
 }
 
 pub async fn setup() -> App {
@@ -105,6 +108,9 @@ pub async fn setup() -> App {
 
     let vapid_key_bytes = std::fs::read(config.vapid_key).expect("Unable to read VAPID key");
     let web_push_signature = web_push::VapidSignatureBuilder::from_pem_no_sub(vapid_key_bytes.as_slice()).expect("Unable to parse VAPID key");
+
+    let as_key_bytes = std::fs::read(config.as_key).expect("Unable to read ActivityStreams key");
+    let as_key = openssl::pkey::PKey::private_key_from_pem(as_key_bytes.as_slice()).expect("Unable to parse ActivityStreams key");
 
     let celery_app = celery::app!(
         broker = AMQPBroker { config.celery.amqp_url.clone() },
@@ -129,12 +135,16 @@ pub async fn setup() -> App {
 
             tasks::statuses::create_status,
             tasks::statuses::create_announce,
+            tasks::statuses::delete_status,
+            tasks::statuses::undo_announce,
             tasks::statuses::insert_into_timelines,
         ],
         task_routes = [],
         prefetch_count = 2,
         acks_late = true,
-        task_retry_for_unexpected = true,
+        task_max_retries = 25,
+        task_min_retry_delay = 30,
+        task_retry_for_unexpected = false,
         broker_connection_retry = true,
         broker_connection_timeout = 10,
         heartbeat = Some(60),
@@ -155,8 +165,10 @@ pub async fn setup() -> App {
             uri: config.uri.clone(),
             jwt_secret: jwt_simple::algorithms::HS512Key::from_bytes(config.jwt_secret.as_bytes()),
             web_push_signature,
+            as_key: as_key.clone(),
         }).manage(oidc_app),
         celery_app,
         vapid_key: vapid_key_bytes,
+        as_key,
     }
 }

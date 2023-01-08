@@ -22,6 +22,14 @@ pub async fn timeline_home(
         crate::db_run(&db, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::home_timeline::dsl::home_timeline.filter(
                 crate::schema::home_timeline::dsl::account_id.eq(&account.id)
+            ).filter(
+                crate::schema::statuses::dsl::deleted_at.is_null()
+            ).filter(
+                crate::schema::statuses::dsl::boost_of_url.is_null().or(
+                    crate::schema::statuses::dsl::boost_of_url.is_not_null().and(
+                        crate::schema::statuses::dsl::boot_of_id.is_not_null()
+                    )
+                )
             ).order_by(
                 crate::schema::home_timeline::dsl::id.desc()
             ).limit(limit as i64).inner_join(crate::schema::statuses::table.on(
@@ -101,6 +109,14 @@ pub async fn timeline_public(
         crate::db_run(&db, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::public_timeline::dsl::public_timeline.order_by(
                 crate::schema::public_timeline::dsl::id.desc()
+            ).filter(
+                crate::schema::statuses::dsl::deleted_at.is_null()
+            ).filter(
+                crate::schema::statuses::dsl::boost_of_url.is_null().or(
+                    crate::schema::statuses::dsl::boost_of_url.is_not_null().and(
+                        crate::schema::statuses::dsl::boot_of_id.is_not_null()
+                    )
+                )
             ).limit(limit as i64).inner_join(crate::schema::statuses::table.on(
                 crate::schema::statuses::dsl::id.eq(crate::schema::public_timeline::dsl::status_id)
             )).into_boxed();

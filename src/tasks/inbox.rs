@@ -86,7 +86,7 @@ async fn _process_activity(activity: activity_streams::Object, signature: Option
                 );
                     match a.id() {
                         Some(id) => {
-                            let activity = match super::fetch_object::<activity_streams::Object>(id.to_string()).await {
+                            let activity = match super::fetch_object::<activity_streams::Object, _>(id).await {
                                 Some(a) => a,
                                 None => {
                                     return Ok(());
@@ -162,6 +162,11 @@ async fn _process_activity(activity: activity_streams::Object, signature: Option
                                         super::relationships::process_undo_follow::new(a.clone(), account)
                                     ).await.with_expected_err(|| "Unable to send task")?;
                                 }
+                                Some(activity_streams::Object::Announce(a)) => {
+                                    celery.send_task(
+                                        super::statuses::undo_announce::new(a.clone(), account)
+                                    ).await.with_expected_err(|| "Unable to send task")?;
+                                }
                                 Some(_) => {
                                     warn!("Object does not support undo: {:?}", a);
                                 }
@@ -172,6 +177,28 @@ async fn _process_activity(activity: activity_streams::Object, signature: Option
                         }
                         None => {
                             warn!("Undo activity does not have object: {:?}", a);
+                        }
+                    }
+                }
+                activity_streams::Object::Delete(a) => {
+                    match &a.object {
+                        Some(o) => {
+                            match resolve_object_or_link(o.clone()).await {
+                                Some(activity_streams::Object::Tombstone(t)) => {
+                                    celery.send_task(
+                                        super::statuses::delete_status::new(t.clone(), account)
+                                    ).await.with_expected_err(|| "Unable to send task")?;
+                                }
+                                Some(_) => {
+                                    warn!("Object does not support delete: {:?}", a);
+                                }
+                                None => {
+                                    return Err(TaskError::ExpectedError(format!("Unable to resolve object {:?}", o)));
+                                }
+                            }
+                        }
+                        None => {
+                            warn!("Delete activity does not have object: {:?}", a);
                         }
                     }
                 }

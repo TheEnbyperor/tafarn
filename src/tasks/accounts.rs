@@ -377,7 +377,6 @@ impl futures::stream::Stream for CollectionStream {
                 self.poll_resolve_object(cx)
             } else {
                 if let Some(obj) = &self.next_page {
-                    println!("Resolving object: {:?}", obj);
                     self.resolve_fut = Some(Box::pin(resolve_object(obj.clone())));
                     self.poll_resolve_object(cx)
                 } else {
@@ -470,11 +469,11 @@ pub async fn update_account_relations(
     let (followers, following) = match (followers, following) {
         (None, None) => (None, None),
         (Some(followers), None) =>
-            (fetch_object(followers).await, None),
+            (fetch_object(&followers).await, None),
         (None, Some(following)) =>
-            (None, fetch_object(following).await),
+            (None, fetch_object(&following).await),
         (Some(followers), Some(following)) =>
-            futures::future::join(fetch_object(followers), fetch_object(following)).await,
+            futures::future::join(fetch_object(&followers), fetch_object(&following)).await,
     };
 
     if has_followers && followers.is_none() {
@@ -620,7 +619,7 @@ pub async fn update_account_relations(
 pub async fn update_account_from_url(
     account: String, follow_graph: bool,
 ) -> TaskResult<models::Account> {
-    let object: activity_streams::Object = match fetch_object(account.clone()).await {
+    let object: activity_streams::Object = match fetch_object(&account).await {
         Some(o) => o,
         None => return Err(TaskError::ExpectedError(format!("Error fetching object {}", account)))
     };
@@ -716,7 +715,7 @@ pub async fn find_account(
             if let Some(account) = account {
                 Ok(Some(account))
             } else {
-                let object: activity_streams::Object = match fetch_object(r.clone()).await {
+                let object: activity_streams::Object = match fetch_object(&r).await {
                     Some(o) => o,
                     None => return Err(TaskError::ExpectedError(format!("Error fetching object {}", r)))
                 };

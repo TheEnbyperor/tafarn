@@ -623,7 +623,7 @@ pub struct Actor {
     pub public_key: Pluralisable<ReferenceOrObject<PublicKey>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Endpoints {
     #[serde(rename = "proxyUrl", default, skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
@@ -868,6 +868,35 @@ impl<'r> rocket::request::FromRequest<'r> for Signature {
     }
 }
 
+#[get("/as/system")]
+pub async fn system_actor(
+    config: &rocket::State<AppConfig>
+) -> Result<Object, rocket::http::Status> {
+    Ok(Object::Application(Actor {
+        common: ObjectCommon {
+            id: Some(format!("https://{}/as/system", config.uri)),
+            url: Some(URLOrLink::URL(format!("https://{}", config.uri))),
+            ..Default::default()
+        },
+        preferred_username: Some(config.uri.clone()),
+        inbox: format!("https://{}/as/system/inbox", config.uri),
+        outbox: format!("https://{}/as/system/outbox", config.uri),
+        following: None,
+        followers: None,
+        liked: None,
+        manually_approves_followers: Some(true),
+        endpoints: Some(ReferenceOrObject::Object(Box::new(Endpoints {
+            shared_inbox: Some(format!("https://{}/as/inbox", config.uri)),
+            ..Default::default()
+        }))),
+        public_key: Pluralisable::Object(ReferenceOrObject::Object(Box::new(PublicKey {
+            id: Some(format!("https://{}/as/system#key", config.uri)),
+            owner: Some(ReferenceOrObject::Reference(format!("https://{}/as/system", config.uri))),
+            public_key_pem: Some(String::from_utf8(config.as_key.public_key_to_pem().unwrap()).unwrap()),
+        })))
+    }))
+}
+
 async fn get_account(db: &crate::DbConn, id: &str) -> Result<crate::models::Account, rocket::http::Status> {
     let account_id = match uuid::Uuid::parse_str(id) {
         Ok(id) => id,
@@ -905,12 +934,8 @@ pub async fn user(
         liked: None,
         manually_approves_followers: Some(account.locked),
         endpoints: Some(ReferenceOrObject::Object(Box::new(Endpoints {
-            proxy_url: None,
-            oauth_authorization_endpoint: None,
-            oauth_token_ndpoint: None,
-            provide_client_key: None,
-            sign_client_key: None,
-            shared_inbox: Some(format!("https://{}/as/inbox", config.uri))
+            shared_inbox: Some(format!("https://{}/as/inbox", config.uri)),
+            ..Default::default()
         }))),
         public_key: match pkey {
             None => Pluralisable::None,
