@@ -5,6 +5,8 @@ use diesel::prelude::*;
 pub struct WebPushSubscription {
     subscription: WebPushSubscriptionData,
     data: WebPushData,
+    #[serde(default)]
+    policy: WebPushPolicy,
 }
 
 #[derive(Deserialize)]
@@ -22,6 +24,35 @@ pub struct WebPushKeys {
 #[derive(Deserialize)]
 pub struct WebPushData {
     alerts: super::objs::WebPushAlerts,
+}
+
+#[derive(Deserialize)]
+pub enum WebPushPolicy {
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "followed")]
+    Followed,
+    #[serde(rename = "follower")]
+    Follower,
+    #[serde(rename = "none")]
+    None,
+}
+
+impl Default for WebPushPolicy {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl ToString for WebPushPolicy {
+    fn to_string(&self) -> String {
+        match self {
+            WebPushPolicy::All => "all".to_string(),
+            WebPushPolicy::Followed => "followed".to_string(),
+            WebPushPolicy::Follower => "follower".to_string(),
+            WebPushPolicy::None => "none".to_string(),
+        }
+    }
 }
 
 fn render_subscription(
@@ -75,6 +106,7 @@ pub async fn create_subscription(
             update: data.data.alerts.update,
             admin_sign_up: data.data.alerts.admin_sign_up,
             admin_report: data.data.alerts.admin_sign_up,
+            policy: data.policy.to_string(),
         };
 
         c.transaction(|| -> diesel::result::QueryResult<_> {
@@ -116,6 +148,7 @@ pub async fn get_subscription(
 #[derive(Deserialize)]
 pub struct WebPushSubscriptionUpdate {
     data: WebPushData,
+    policy: Option<WebPushPolicy>,
 }
 
 #[put("/api/v1/push/subscription", data = "<data>")]
@@ -127,22 +160,40 @@ pub async fn update_subscription(
         return Err(rocket::http::Status::Forbidden);
     }
 
+    use crate::schema::web_push_subscriptions;
+    #[derive(AsChangeset)]
+    #[table_name="web_push_subscriptions"]
+    pub struct WebPushSubscriptionUpdate {
+        follow: bool,
+        favourite: bool,
+        reblog: bool,
+        mention: bool,
+        poll: bool,
+        status: bool,
+        follow_request: bool,
+        update: bool,
+        admin_sign_up: bool,
+        admin_report: bool,
+        policy: Option<String>,
+    }
+
     let subscription: crate::models::WebPushSubscription = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
         diesel::update(crate::schema::web_push_subscriptions::dsl::web_push_subscriptions.filter(
             crate::schema::web_push_subscriptions::dsl::token_id.eq(user.json_web_token_id)
         ))
-            .set((
-                     crate::schema::web_push_subscriptions::dsl::follow.eq(data.data.alerts.follow),
-                     crate::schema::web_push_subscriptions::dsl::favourite.eq(data.data.alerts.favourite),
-                     crate::schema::web_push_subscriptions::dsl::reblog.eq(data.data.alerts.reblog),
-                     crate::schema::web_push_subscriptions::dsl::mention.eq(data.data.alerts.mention),
-                     crate::schema::web_push_subscriptions::dsl::poll.eq(data.data.alerts.poll),
-                     crate::schema::web_push_subscriptions::dsl::status.eq(data.data.alerts.status),
-                     crate::schema::web_push_subscriptions::dsl::follow_request.eq(data.data.alerts.follow_request),
-                     crate::schema::web_push_subscriptions::dsl::update.eq(data.data.alerts.update),
-                     crate::schema::web_push_subscriptions::dsl::admin_sign_up.eq(data.data.alerts.admin_sign_up),
-                     crate::schema::web_push_subscriptions::dsl::admin_report.eq(data.data.alerts.admin_report),
-            ))
+            .set(WebPushSubscriptionUpdate {
+                policy: data.policy.as_ref().map(|p| p.to_string()),
+                follow: data.data.alerts.follow,
+                favourite: data.data.alerts.favourite,
+                reblog: data.data.alerts.reblog,
+                mention: data.data.alerts.mention,
+                poll: data.data.alerts.poll,
+                status: data.data.alerts.status,
+                follow_request: data.data.alerts.follow_request,
+                update: data.data.alerts.update,
+                admin_sign_up: data.data.alerts.admin_sign_up,
+                admin_report: data.data.alerts.admin_report,
+            })
             .get_result(c)
     }).await?;
 

@@ -33,8 +33,8 @@ pub trait ObjectID {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ReferenceOrObject<T> {
-    Object(Box<T>),
     Reference(String),
+    Object(Box<T>),
 }
 
 impl<T: ObjectID> ReferenceOrObject<T> {
@@ -660,6 +660,8 @@ pub struct Link {
     pub width: Option<u64>,
     #[serde(rename = "preview", default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<ReferenceOrObject<ObjectOrLink>>,
+    #[serde(rename = "type", skip_serializing)]
+    pub _type: String,
 }
 
 impl ObjectID for Link {

@@ -109,7 +109,8 @@ pub struct Account {
     pub avatar_remote_url: Option<String>,
     pub header_file: Option<String>,
     pub header_content_type: Option<String>,
-    pub header_remote_url: Option<String>
+    pub header_remote_url: Option<String>,
+    pub follower_collection_url: Option<String>,
 }
 
 #[derive(Insertable, Clone, Debug)]
@@ -143,7 +144,8 @@ pub struct NewAccount {
     pub avatar_remote_url: Option<String>,
     pub header_file: Option<String>,
     pub header_content_type: Option<String>,
-    pub header_remote_url: Option<String>
+    pub header_remote_url: Option<String>,
+    pub follower_collection_url: Option<String>,
 }
 
 impl Account {
@@ -182,6 +184,7 @@ pub struct WebPushSubscription {
     pub update: bool,
     pub admin_sign_up: bool,
     pub admin_report: bool,
+    pub policy: String,
 }
 
 #[derive(Insertable, Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
@@ -257,4 +260,95 @@ pub struct Media {
     pub created_at: chrono::NaiveDateTime,
     pub description: Option<String>,
     pub owned_by: Option<String>,
+}
+
+#[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="statuses"]
+pub struct Status {
+    pub id: uuid::Uuid,
+    pub iid: i32,
+    pub url: String,
+    pub uri: Option<String>,
+    pub text: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub in_reply_to_id: Option<uuid::Uuid>,
+    pub boot_of_id: Option<uuid::Uuid>,
+    pub sensitive: bool,
+    pub spoiler_text: String,
+    pub language: Option<String>,
+    pub local: bool,
+    pub account_id: uuid::Uuid,
+    pub deleted_at: Option<chrono::NaiveDateTime>,
+    pub edited_at: Option<chrono::NaiveDateTime>,
+    pub public: bool,
+    pub visible: bool,
+}
+
+#[derive(Insertable, Clone, Debug)]
+#[table_name="statuses"]
+pub struct NewStatus {
+    pub id: uuid::Uuid,
+    pub url: String,
+    pub uri: Option<String>,
+    pub text: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub in_reply_to_id: Option<uuid::Uuid>,
+    pub boot_of_id: Option<uuid::Uuid>,
+    pub sensitive: bool,
+    pub spoiler_text: String,
+    pub language: Option<String>,
+    pub local: bool,
+    pub account_id: uuid::Uuid,
+    pub deleted_at: Option<chrono::NaiveDateTime>,
+    pub edited_at: Option<chrono::NaiveDateTime>,
+    pub public: bool,
+    pub visible: bool,
+}
+
+#[derive(Insertable, Queryable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="status_media_attachments"]
+pub struct StatusMediaAttachment {
+    pub status_id: uuid::Uuid,
+    pub media_attachment_id: uuid::Uuid,
+    pub attachment_order: i32,
+}
+
+#[derive(Insertable, Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="status_audiences"]
+pub struct StatusAudience {
+    pub id: uuid::Uuid,
+    pub status_id: uuid::Uuid,
+    pub mention: bool,
+    pub account: Option<uuid::Uuid>,
+    pub account_followers: Option<uuid::Uuid>,
+}
+
+#[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="home_timeline"]
+pub struct HomeTimelineEntry {
+    pub id: i32,
+    pub account_id: uuid::Uuid,
+    pub status_id: uuid::Uuid,
+}
+
+#[derive(Insertable, Clone, Debug)]
+#[table_name="home_timeline"]
+pub struct NewHomeTimelineEntry {
+    pub account_id: uuid::Uuid,
+    pub status_id: uuid::Uuid,
+}
+
+#[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="public_timeline"]
+pub struct PublicTimelineEntry {
+    pub id: i32,
+    pub status_id: uuid::Uuid,
+}
+
+#[derive(Insertable, Clone, Debug)]
+#[table_name="public_timeline"]
+pub struct NewPublicTimelineEntry {
+    pub status_id: uuid::Uuid,
 }

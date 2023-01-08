@@ -44,7 +44,13 @@ pub async fn process_activity(activity: activity_streams::Object, signature: act
                 }
             };
 
-            let account = super::accounts::find_account(actor, true).await?;
+            let account = match super::accounts::find_account(actor, true).await? {
+                Some(a) => a,
+                None => {
+                    warn!("Activity \"{}\" has an invalid actor", a.id_or_default());
+                    return Ok(());
+                }
+            };
 
             if account.local {
                 warn!("Activity \"{}\" has local actor \"{}\"", a.id_or_default(), a.id_or_default());
@@ -72,9 +78,18 @@ pub async fn process_activity(activity: activity_streams::Object, signature: act
 
             let celery = super::config().celery;
             match activity {
+                activity_streams::Object::Create(a) => {
+                    if let Some(o) = a.object {
+                        celery.send_task(
+                            super::statuses::create_status::new(o, account)
+                        ).await.with_expected_err(|| "Unable to send task")?;
+                    } else {
+                        warn!("Create activity \"{}\" has no object", a.id_or_default());
+                    }
+                }
                 activity_streams::Object::Follow(a) => {
                     celery.send_task(
-                        super::relationships::process_follow::new(a.clone(), account)
+                        super::relationships::process_follow::new(a, account)
                     ).await.with_expected_err(|| "Unable to send task")?;
                 }
                 activity_streams::Object::Update(a) => {

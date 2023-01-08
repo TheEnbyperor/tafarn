@@ -43,13 +43,14 @@ pub async fn search(
                         match crate::tasks::accounts::find_account(
                             super::activity_streams::ReferenceOrObject::Reference(actor), true
                         ).await {
-                            Ok(account) => {
+                            Ok(Some(account)) => {
                                 return Ok(rocket::serde::json::Json(super::objs::Search {
                                     accounts: vec![super::accounts::render_account(config, &db, account).await?],
                                     hashtags: vec![],
                                     statuses: vec![]
                                 }));
                             },
+                            Ok(None) => {},
                             Err(e) => {
                                 warn!("Error resolving search: {}", e);
                             }

@@ -4,6 +4,7 @@ use celery::prelude::*;
 use diesel::prelude::*;
 use itertools::Itertools;
 use futures::stream::StreamExt;
+use crate::views::activity_streams::ObjectID;
 use super::{resolve_url, resolve_object, fetch_object};
 
 async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams::ImageOrLink>) -> Option<(String, String, String)> {
@@ -60,7 +61,7 @@ async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams:
 
 async fn _update_account(
     object: activity_streams::Object, new_account: bool, follow_graph: bool,
-) -> TaskResult<models::Account> {
+) -> TaskResult<Option<models::Account>> {
     let db = super::config().db.clone();
     let is_bot = matches!(object, activity_streams::Object::Service(_) | activity_streams::Object::Application(_));
     let is_group = matches!(object, activity_streams::Object::Group(_));
@@ -98,7 +99,7 @@ async fn _update_account(
                 Some(mut existing_account) => {
                     if existing_account.local {
                         warn!("Account \"{}\" is local, ignoring update", existing_account.id);
-                        return Ok(existing_account);
+                        return Ok(Some(existing_account));
                     }
                     existing_account.actor = a.common.id.clone();
                     existing_account.bot = is_bot;
@@ -113,6 +114,7 @@ async fn _update_account(
                     existing_account.url = a.common.url.clone().and_then(resolve_url).or(existing_account.url);
                     existing_account.locked = a.manually_approves_followers.unwrap_or(existing_account.locked);
                     existing_account.shared_inbox_url = shared_inbox;
+                    existing_account.follower_collection_url = a.followers.clone();
 
                     if let Some((file, url, format)) = avatar {
                         existing_account.avatar_file = Some(file);
@@ -165,6 +167,7 @@ async fn _update_account(
                         header_file: None,
                         header_content_type: None,
                         header_remote_url: None,
+                        follower_collection_url: a.followers.clone(),
                     };
 
                     if let Some((file, url, format)) = avatar {
@@ -191,7 +194,7 @@ async fn _update_account(
                 let key = match resolve_object(key.clone()).await {
                     Some(k) => k,
                     None => {
-                        warn!("Unable to resolve public key: {:?}", key);
+                        warn!("Unable to resolve public key on {}: {:?}", object.id_or_default(), key);
                         continue;
                     }
                 };
@@ -235,13 +238,13 @@ async fn _update_account(
                 let attachment = match match resolve_object(attachment.clone()).await {
                     Some(a) => a,
                     None => {
-                        warn!("Unable to resolve attachment: {:?}", attachment);
+                        warn!("Unable to resolve attachment on {}: {:?}", object.id_or_default(), attachment);
                         continue;
                     }
                 } {
                     activity_streams::ObjectOrLink::Object(o) => o,
                     activity_streams::ObjectOrLink::Link(l) => {
-                        warn!("Attachment is a link: {:?}", l);
+                        warn!("Attachment is a link on {}: {:?}", object.id_or_default(), l);
                         continue;
                     }
                 };
@@ -250,7 +253,7 @@ async fn _update_account(
                         pvs.push((pv.name.unwrap_or_default(), pv.value.unwrap_or_default()));
                     },
                     o => {
-                        warn!("Account attachment is unsupported: {:?}", o);
+                        warn!("Account attachment is unsupported on {}: {:?}", object.id_or_default(), o);
                         continue;
                     }
                 }
@@ -282,9 +285,9 @@ async fn _update_account(
                 ).await.with_expected_err(|| "Unable to send task")?;
             }
 
-            Ok(new_account)
+            Ok(Some(new_account))
         }
-        o => Err(TaskError::UnexpectedError(format!("Invalid object: {:?}", o)))
+        o => Ok(None)
     }
 }
 
@@ -557,14 +560,17 @@ pub async fn update_account_relations(
         .map(|item| async move {
             (item.id().map(|s| s.to_string()), find_account(item, false).await)
         })
-        .buffer_unordered(10);
+        .buffer_unordered(5);
     while let Some((id, account)) = s.next().await {
         match account {
-            Ok(account) =>if let Some(id) = id {
+            Ok(Some(account)) => if let Some(id) = id {
                 accounts.insert(id.to_string(), account);
             },
+            Ok(None) => {
+                error!("Unable to fetch account {:?}", id);
+            },
             Err(e) => {
-                log::error!("Unable to fetch account {:?}: {}", id, e);
+                error!("Unable to fetch account {:?}: {}", id, e);
             }
         }
     }
@@ -620,7 +626,10 @@ pub async fn update_account_from_url(
         None => return Err(TaskError::ExpectedError(format!("Error fetching object {}", account)))
     };
 
-    _update_account(object, false, follow_graph).await
+    match _update_account(object, false, follow_graph).await? {
+        Some(a) => Ok(a),
+        None => Err(TaskError::UnexpectedError(format!("Unable to fetch account {}", account)))
+    }
 }
 
 #[celery::task]
@@ -634,7 +643,11 @@ pub async fn update_account(
 pub async fn update_account_from_object(
     account: activity_streams::Object, no_graph: bool
 ) -> TaskResult<models::Account> {
-    _update_account(account, false,!no_graph).await
+    let id = account.id_or_default().to_string();
+    match _update_account(account, false, !no_graph).await? {
+        Some(a) => Ok(a),
+        None => Err(TaskError::UnexpectedError(format!("Unable to update account {:?}", id)))
+    }
 }
 
 #[celery::task]
@@ -657,7 +670,7 @@ pub async fn update_accounts(no_graph: bool) -> TaskResult<()> {
 pub async fn find_account(
     activity: activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>,
     follow_graph: bool
-) -> TaskResult<models::Account> {
+) -> TaskResult<Option<models::Account>> {
     let config = super::config();
     let db = config.db.clone();
 
@@ -691,7 +704,7 @@ pub async fn find_account(
                         crate::schema::accounts::dsl::id.eq(id)
                     ).get_result(&c).with_expected_err(|| "Unable to fetch account")
                 })?;
-                return Ok(account);
+                return Ok(Some(account));
             }
 
             let account: Option<models::Account> = tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -702,7 +715,7 @@ pub async fn find_account(
             })?;
 
             if let Some(account) = account {
-                Ok(account)
+                Ok(Some(account))
             } else {
                 let object: activity_streams::Object = match fetch_object(r.clone()).await {
                     Some(o) => o,

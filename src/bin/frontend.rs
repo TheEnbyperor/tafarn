@@ -37,6 +37,8 @@ async fn main() -> Result<(), rocket::Error> {
         db: std::sync::Arc::new(diesel::PgConnection::pool("db", &app.rocket).unwrap()),
         celery: std::sync::Arc::new(app.celery_app.clone()),
         uri: app.uri,
+        vapid_key: app.vapid_key,
+        web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new())
     });
 
     let _ = app.rocket

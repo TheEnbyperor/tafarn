@@ -15,6 +15,8 @@ async fn main() {
         db: std::sync::Arc::new(db_pool),
         celery: celery_app.clone(),
         uri: app.uri,
+        vapid_key: app.vapid_key,
+        web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new()),
     });
 
     info!("Tafarn task runner starting...");

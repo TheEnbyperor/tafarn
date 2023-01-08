@@ -4,6 +4,8 @@ pub mod inbox;
 pub mod accounts;
 pub mod relationships;
 pub mod delivery;
+pub mod notifications;
+pub mod statuses;
 
 lazy_static::lazy_static! {
     pub static ref CONFIG: std::sync::RwLock<Option<Config>> = std::sync::RwLock::new(None);
@@ -14,6 +16,8 @@ pub struct Config {
     pub db: std::sync::Arc<r2d2::Pool<diesel::r2d2::ConnectionManager<diesel::PgConnection>>>,
     pub celery: std::sync::Arc<crate::CeleryApp>,
     pub uri: String,
+    pub vapid_key: Vec<u8>,
+    pub web_push_client: std::sync::Arc<web_push_old::WebPushClient>,
 }
 
 #[inline]

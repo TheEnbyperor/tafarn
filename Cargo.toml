@@ -60,6 +60,7 @@ regex = "1"
 image = "0.24"
 percent-encoding = "2"
 blurhash = "0.1"
+web_push_old = { package = "web-push", version = "0.7" }
 
 [profile.release]
 strip = true

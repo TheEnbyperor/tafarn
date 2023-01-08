@@ -95,6 +95,7 @@ pub struct App {
     pub rocket: rocket::Rocket<rocket::Build>,
     pub celery_app: CeleryApp,
     pub uri: String,
+    pub vapid_key: Vec<u8>,
 }
 
 pub async fn setup() -> App {
@@ -122,6 +123,12 @@ pub async fn setup() -> App {
             tasks::relationships::unfollow_account,
             tasks::relationships::process_accept_follow,
             tasks::relationships::process_reject_follow,
+
+            tasks::notifications::notify,
+            tasks::notifications::deliver_notification,
+
+            tasks::statuses::create_status,
+            tasks::statuses::insert_into_timelines,
         ],
         task_routes = [],
         prefetch_count = 2,
@@ -149,5 +156,6 @@ pub async fn setup() -> App {
             web_push_signature,
         }).manage(oidc_app),
         celery_app,
+        vapid_key: vapid_key_bytes,
     }
 }

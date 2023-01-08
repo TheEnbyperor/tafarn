@@ -18,12 +18,17 @@ pub async fn process_follow(
             return Ok(());
         }
     };
-    let followed_account = super::accounts::find_account(object.clone(), false).await?;
+    let followed_account = match super::accounts::find_account(object.clone(), false).await? {
+        Some(a) => a,
+        None => {
+            warn!("Follow activity \"{}\" has an invalid object", activity.id_or_default());
+            return Ok(());
+        }
+    };
     let created_at = activity.common.published.unwrap_or_else(|| Utc::now());
 
     if followed_account.local {
         if let Some(inbox) = account.inbox_url {
-            let celery = super::config().celery;
             let a = followed_account.clone();
             let task = super::delivery::deliver_object::new(activity_streams::Object::Accept(activity_streams::ActivityCommon {
                 common: activity_streams::ObjectCommon {
@@ -42,14 +47,14 @@ pub async fn process_follow(
                 origin: None,
                 instrument: None,
             }), inbox, a);
-            celery.send_task(task).await.with_expected_err(|| "Unable to submit delivery task")?;
+            config.celery.send_task(task).await.with_expected_err(|| "Unable to submit delivery task")?;
         } else {
             warn!("Account \"{}\" has no inbox URL", account.id);
         }
 
-        tokio::task::block_in_place(|| -> TaskResult<_> {
+        let notification = tokio::task::block_in_place(|| -> TaskResult<_> {
             let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-            diesel::insert_into(crate::schema::notifications::dsl::notifications)
+            let notification = diesel::insert_into(crate::schema::notifications::dsl::notifications)
                 .values(models::NewNotification {
                     id: uuid::Uuid::new_v4(),
                     notification_type: "follow".to_string(),
@@ -59,7 +64,7 @@ pub async fn process_follow(
                     created_at: created_at.naive_utc(),
                 })
                 .on_conflict_do_nothing()
-                .execute(&c).with_expected_err(|| "Unable to insert following")?;
+                .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert following")?;
             diesel::insert_into(crate::schema::following::dsl::following)
                 .values(models::NewFollowing {
                     id: uuid::Uuid::new_v4(),
@@ -70,8 +75,10 @@ pub async fn process_follow(
                 })
                 .on_conflict_do_nothing()
                 .execute(&c).with_expected_err(|| "Unable to insert following")?;
-            Ok(())
+            Ok(notification)
         })?;
+
+        config.celery.send_task(super::notifications::notify::new(notification)).await.with_expected_err(|| "Unable to submit notification task")?;
     } else {
         info!("Follow activity \"{}\" has non-local object {:?}", activity.id_or_default(), object);
     }
@@ -92,7 +99,13 @@ pub async fn process_undo_follow(
             return Ok(());
         }
     };
-    let followed_account = super::accounts::find_account(object.clone(), false).await?;
+    let followed_account = match super::accounts::find_account(object.clone(), false).await? {
+        Some(a) => a,
+        None => {
+            warn!("Undo follow activity \"{}\" has an invalid object", activity.id_or_default());
+            return Ok(());
+        }
+    };
 
     if !followed_account.local {
         info!("Undo follow activity \"{}\" has non-local object {:?}", activity.id_or_default(), object);
@@ -225,8 +238,20 @@ pub async fn process_accept_follow(
             return Ok(());
         }
     };
-    let following_account = super::accounts::find_account(actor.clone(), false).await?;
-    let followed_account = super::accounts::find_account(object.clone(), false).await?;
+    let following_account = match super::accounts::find_account(actor.clone(), false).await? {
+        Some(a) => a,
+        None => {
+            warn!("Accept follow activity \"{}\" has invalid actor", activity.id_or_default());
+            return Ok(());
+        }
+    };
+    let followed_account = match super::accounts::find_account(object.clone(), false).await? {
+        Some(a) => a,
+        None => {
+            warn!("Accept follow activity \"{}\" has invalid object", activity.id_or_default());
+            return Ok(());
+        }
+    };
 
     if !following_account.local {
         info!("Accept follow activity \"{}\" has non-local actor {:?}", activity.id_or_default(), object);
@@ -270,8 +295,20 @@ pub async fn process_reject_follow(
             return Ok(());
         }
     };
-    let following_account = super::accounts::find_account(actor.clone(), false).await?;
-    let followed_account = super::accounts::find_account(object.clone(), false).await?;
+    let following_account = match super::accounts::find_account(actor.clone(), false).await? {
+        Some(a) => a,
+        None => {
+            warn!("Reject follow activity \"{}\" has invalid actor", activity.id_or_default());
+            return Ok(());
+        }
+    };
+    let followed_account = match super::accounts::find_account(object.clone(), false).await? {
+        Some(a) => a,
+        None => {
+            warn!("Reject follow activity \"{}\" has invalid object", activity.id_or_default());
+            return Ok(());
+        }
+    };
 
     if !following_account.local {
         info!("Reject follow activity \"{}\" has non-local actor {:?}", activity.id_or_default(), object);

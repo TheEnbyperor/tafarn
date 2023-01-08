@@ -93,6 +93,7 @@ pub async fn init_account(db: crate::DbConn, user: &super::oidc::OIDCIdTokenClai
             header_file: None,
             header_content_type: None,
             header_remote_url: None,
+            follower_collection_url: None,
         };
         crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
             diesel::insert_into(crate::schema::accounts::table)

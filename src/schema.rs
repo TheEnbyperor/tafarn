@@ -107,6 +107,7 @@ table! {
         header_file -> Nullable<Varchar>,
         header_content_type -> Nullable<Varchar>,
         header_remote_url -> Nullable<Varchar>,
+        follower_collection_url -> Nullable<Varchar>,
     }
 }
 
@@ -138,6 +139,7 @@ table! {
         update -> Bool,
         admin_sign_up -> Bool,
         admin_report -> Bool,
+        policy -> Varchar,
     }
 }
 
@@ -195,6 +197,62 @@ table! {
     }
 }
 
+table! {
+    statuses (id) {
+        id -> Uuid,
+        iid -> Int4,
+        url -> Varchar,
+        uri -> Nullable<Varchar>,
+        text -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        in_reply_to_id -> Nullable<Uuid>,
+        boot_of_id -> Nullable<Uuid>,
+        sensitive -> Bool,
+        spoiler_text -> Varchar,
+        language -> Nullable<Varchar>,
+        local -> Bool,
+        account_id -> Uuid,
+        deleted_at -> Nullable<Timestamp>,
+        edited_at -> Nullable<Timestamp>,
+        public -> Bool,
+        visible -> Bool,
+    }
+}
+
+table! {
+    status_media_attachments (status_id, media_attachment_id) {
+        status_id -> Uuid,
+        media_attachment_id -> Uuid,
+        attachment_order -> Int4,
+    }
+}
+
+table! {
+    status_audiences (id) {
+        id -> Uuid,
+        status_id -> Uuid,
+        mention -> Bool,
+        account -> Nullable<Uuid>,
+        account_followers -> Nullable<Uuid>,
+    }
+}
+
+table! {
+    home_timeline (id) {
+        id -> Int4,
+        account_id -> Uuid,
+        status_id -> Uuid,
+    }
+}
+
+table! {
+    public_timeline (id) {
+        id -> Int4,
+        status_id -> Uuid,
+    }
+}
+
 joinable!(app_scopes -> apps (app_id));
 joinable!(oauth_consent_scopes -> oauth_consents (consent_id));
 joinable!(oauth_code_scopes -> oauth_codes (code_id));
@@ -204,6 +262,10 @@ joinable!(web_push_subscriptions -> oauth_token (token_id));
 joinable!(web_push_subscriptions -> accounts (account_id));
 joinable!(public_keys -> accounts (user_id));
 joinable!(notifications -> accounts (account));
+joinable!(statuses -> accounts (account_id));
+joinable!(status_media_attachments -> media (media_attachment_id));
+joinable!(status_media_attachments -> statuses (status_id));
+joinable!(status_audiences -> statuses (status_id));
 
 allow_tables_to_appear_in_same_query!(
     session,
@@ -221,4 +283,9 @@ allow_tables_to_appear_in_same_query!(
     public_keys,
     following,
     notifications,
+    media,
+    statuses,
+    status_media_attachments,
+    home_timeline,
+    public_timeline,
 );

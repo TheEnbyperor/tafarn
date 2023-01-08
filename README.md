@@ -43,6 +43,7 @@ or `given_name` claim, if `preferred_username` is not available.
 - Reject follow
 - Undo follow
 - Update Person/Service/Organization/Application/Group
+- Create note
 
 ### Events the server can send
 - Accept follow
