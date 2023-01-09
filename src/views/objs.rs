@@ -294,7 +294,7 @@ pub struct Status {
     pub pinned: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Eq, PartialEq)]
 pub enum StatusVisibility {
     #[serde(rename = "public")]
     Public,

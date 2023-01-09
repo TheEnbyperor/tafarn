@@ -36,7 +36,7 @@ pub async fn process_follow(
                     published: Some(created_at),
                     ..Default::default()
                 },
-                actor: followed_account.actor.map(activity_streams::ReferenceOrObject::Reference),
+                actor: Some(activity_streams::ReferenceOrObject::Reference(followed_account.actor_id(&config.uri))),
                 object: Some(activity_streams::ReferenceOrObject::Object(
                     Box::new(activity_streams::ObjectOrLink::Object(
                         activity_streams::Object::Follow(activity.clone())
@@ -141,7 +141,7 @@ pub async fn follow_account(
                     published: Some(created_at),
                     ..Default::default()
                 },
-                actor: follower.actor.map(activity_streams::ReferenceOrObject::Reference),
+                actor: Some(activity_streams::ReferenceOrObject::Reference(follower.actor_id(&config.uri))),
                 object: followee.actor.map(activity_streams::ReferenceOrObject::Reference),
                 target: None,
                 result: None,
@@ -169,7 +169,7 @@ pub async fn unfollow_account(
         if let Some(inbox) = followee.inbox_url {
             let celery = super::config().celery;
             let a = follower.clone();
-            let actor = follower.actor.map(activity_streams::ReferenceOrObject::Reference);
+            let actor = Some(activity_streams::ReferenceOrObject::Reference(follower.actor_id(&config.uri)));
             let task = super::delivery::deliver_object::new(activity_streams::Object::Undo(activity_streams::ActivityCommon {
                 common: activity_streams::ObjectCommon {
                     id: Some(format!("https://{}/as/transient/{}", config.uri, uuid::Uuid::new_v4())),

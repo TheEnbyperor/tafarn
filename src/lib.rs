@@ -138,6 +138,8 @@ pub async fn setup() -> App {
             tasks::statuses::delete_status,
             tasks::statuses::undo_announce,
             tasks::statuses::insert_into_timelines,
+            tasks::statuses::deliver_boost,
+            tasks::statuses::deliver_undo_boost,
         ],
         task_routes = [],
         prefetch_count = 2,

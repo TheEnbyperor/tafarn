@@ -144,6 +144,8 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::statuses::get_status,
             tafarn::views::statuses::status_context,
             tafarn::views::statuses::status_boosted_by,
+            tafarn::views::statuses::boost_status,
+            tafarn::views::statuses::unboost_status,
 
             tafarn::views::web_push::create_subscription,
             tafarn::views::web_push::get_subscription,

@@ -53,7 +53,7 @@ fn sign_request(req: &mut reqwest::Request, pkey: &openssl::pkey::PKeyRef<openss
     let signature = signer.sign_oneshot_to_vec(&signed_data)
         .map_err(|e| format!("Unable to sign request: {}", e))?;
     req.headers_mut().insert("Signature", format!(
-        "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"(request-target) {}\",signature=\"{}\"",
+        "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"{}\",signature=\"{}\"",
         key_id, signed_headers.join(" "),
         base64::encode(signature)
     ).parse().map_err(|e| format!("Unable to parse signature header: {}", e))?);

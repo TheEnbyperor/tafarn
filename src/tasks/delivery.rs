@@ -2,11 +2,12 @@ use crate::models;
 use crate::views::activity_streams;
 use celery::prelude::*;
 use diesel::prelude::*;
-use crate::tasks::config;
+use itertools::Itertools;
+
 
 #[celery::task]
 pub async fn deliver_object(object: activity_streams::Object, inbox: String, account: models::Account) -> TaskResult<()> {
-    let config = config();
+    let config = super::config();
     let url = reqwest::Url::parse(&inbox).with_unexpected_err(|| "Invalid inbox URL")?;
     let host = url.host_str().map(|h| h.to_string()).ok_or(TaskError::UnexpectedError("Invalid inbox URL".to_string()))?;
 
@@ -37,6 +38,29 @@ pub async fn deliver_object(object: activity_streams::Object, inbox: String, acc
     if !status.is_success() {
         let text = r.text().await.with_expected_err(|| "Unable to read response")?;
         return Err(TaskError::UnexpectedError(format!("Delivery failed ({}): {}", status, text)));
+    }
+
+    Ok(())
+}
+
+pub async fn deliver_dedupe_inboxes(
+    object: activity_streams::Object, audience: Vec<models::Account>, account: models::Account
+) -> TaskResult<()> {
+    let config = super::config();
+    let mut inboxes = vec![];
+    for a in audience {
+        if let Some(inbox) = a.shared_inbox_url {
+            inboxes.push(inbox);
+        } else if let Some(inbox) = a.inbox_url {
+            inboxes.push(inbox);
+        }
+    }
+
+    let inboxes: Vec<_> = inboxes.into_iter().unique().collect();
+    for inbox in inboxes {
+        config.celery.send_task(
+            deliver_object::new(object.clone(), inbox, account.clone())
+        ).await.with_expected_err(|| "Unable to submit delivery task")?;
     }
 
     Ok(())

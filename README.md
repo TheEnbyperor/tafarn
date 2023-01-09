@@ -45,11 +45,15 @@ or `given_name` claim, if `preferred_username` is not available.
 - Update Person/Service/Organization/Application/Group
 - Create note
 - Announce note
+- Undo announce
+- Delete note
 
 ### Events the server can send
 - Accept follow
 - Follow
 - Undo follow
+- Announce note
+- Undo announce
 
 ## API endpoints implementation status
 
@@ -164,12 +168,12 @@ or `given_name` claim, if `preferred_username` is not available.
 - [x] GET /api/v1/statuses/:id
 - [ ] DELETE /api/v1/statuses/:id
 - [x] GET /api/v1/statuses/:id/context
-- [ ] GET /api/v1/statuses/:id/reblogged_by
+- [x] GET /api/v1/statuses/:id/reblogged_by
 - [ ] GET /api/v1/statuses/:id/favourited_by
 - [ ] POST /api/v1/statuses/:id/favourite
 - [ ] POST /api/v1/statuses/:id/unfavourite 
-- [ ] POST /api/v1/statuses/:id/reblog
-- [ ] POST /api/v1/statuses/:id/unreblog
+- [x] POST /api/v1/statuses/:id/reblog
+- [x] POST /api/v1/statuses/:id/unreblog
 - [ ] POST /api/v1/statuses/:id/mute
 - [ ] POST /api/v1/statuses/:id/unmute
 - [ ] POST /api/v1/statuses/:id/pin

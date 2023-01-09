@@ -149,6 +149,22 @@ pub struct NewAccount {
 }
 
 impl Account {
+    pub fn actor_id(&self, uri: &str) -> String {
+        if self.local {
+            format!("https://{}/as/users/{}", uri, self.id)
+        } else {
+            self.actor.clone().unwrap_or_default()
+        }
+    }
+
+    pub fn follower_collection(&self, uri: &str) -> String {
+        if self.local {
+            format!("https://{}/as/users/{}/followers", uri, self.id)
+        } else {
+            self.follower_collection_url.clone().unwrap_or_default()
+        }
+    }
+
     pub fn key_id(&self, uri: &str) -> String {
         format!("https://{}/as/users/{}#key", uri, self.id)
     }
@@ -285,6 +301,20 @@ pub struct Status {
     pub edited_at: Option<chrono::NaiveDateTime>,
     pub public: bool,
     pub visible: bool,
+}
+
+impl Status {
+    pub fn url(&self, uri: &str) -> String {
+        if self.local {
+            if self.boot_of_id.is_some() {
+                format!("https://{}/as/status/{}/activity", uri, self.id)
+            } else {
+                format!("https://{}/as/status/{}", uri, self.id)
+            }
+        } else {
+            self.url.clone()
+        }
+    }
 }
 
 #[derive(Insertable, Clone, Debug)]

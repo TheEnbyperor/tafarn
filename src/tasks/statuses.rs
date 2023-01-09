@@ -104,7 +104,7 @@ async fn resolve_audiences(object: &activity_streams::ObjectCommon, status_id: u
                         status_id,
                         mention,
                         account: None,
-                        account_followers: Some(acc.id)
+                        account_followers: Some(acc.id),
                     }));
                 } else {
                     if let Some(acc) = super::accounts::find_account(aud, true).await? {
@@ -113,7 +113,7 @@ async fn resolve_audiences(object: &activity_streams::ObjectCommon, status_id: u
                             status_id,
                             mention,
                             account: Some(acc.id),
-                            account_followers: None
+                            account_followers: None,
                         }));
                     }
                 }
@@ -122,12 +122,12 @@ async fn resolve_audiences(object: &activity_streams::ObjectCommon, status_id: u
         };
 
     for aud in object.to.as_slice() {
-        if let Some (aud) = resolve_audience(aud.clone(), true, config.db.clone()).await? {
+        if let Some(aud) = resolve_audience(aud.clone(), true, config.db.clone()).await? {
             audiences.push(aud);
         }
     }
     for aud in object.cc.as_slice() {
-        if let Some (aud) = resolve_audience(aud.clone(), false, config.db.clone()).await? {
+        if let Some(aud) = resolve_audience(aud.clone(), false, config.db.clone()).await? {
             audiences.push(aud);
         }
     }
@@ -135,13 +135,13 @@ async fn resolve_audiences(object: &activity_streams::ObjectCommon, status_id: u
     Ok(Audiences {
         to_public,
         cc_public,
-        audiences
+        audiences,
     })
 }
 
 #[async_recursion::async_recursion]
 async fn _update_status(
-    object: activity_streams::Object, account: Option<models::Account>, new_status: bool
+    object: activity_streams::Object, account: Option<models::Account>, new_status: bool,
 ) -> TaskResult<models::Status> {
     let config = super::config();
     let db = config.db.clone();
@@ -187,7 +187,7 @@ async fn _update_status(
                         None => return Err(TaskError::UnexpectedError(format!("Unable to find account for object \"{}\"", id)))
                     },
                     None => {
-                        return Err(TaskError::UnexpectedError(format!("Object \"{}\" has no attributed_to", id)))
+                        return Err(TaskError::UnexpectedError(format!("Object \"{}\" has no attributed_to", id)));
                     }
                 }
             };
@@ -213,8 +213,12 @@ async fn _update_status(
                     existing_status.spoiler_text = o.summary.unwrap_or_default();
                     existing_status.public = audiences.to_public;
                     existing_status.visible = audiences.to_public || audiences.cc_public;
+                    existing_status.in_reply_to_url = if in_reply_to.is_some() {
+                        None
+                    } else {
+                        in_reply_to_id
+                    };
                     existing_status.in_reply_to_id = in_reply_to.map(|s| s.id);
-                    existing_status.in_reply_to_url = in_reply_to_id;
 
                     tokio::task::block_in_place(|| -> TaskResult<_> {
                         let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
@@ -224,7 +228,7 @@ async fn _update_status(
                     })?;
 
                     existing_status
-                },
+                }
                 None => {
                     let new_status = models::NewStatus {
                         id: status_id,
@@ -233,8 +237,12 @@ async fn _update_status(
                         text: o.content.unwrap_or_default(),
                         created_at: o.published.unwrap_or_else(|| Utc::now()).naive_utc(),
                         updated_at: o.updated.or(o.published).unwrap_or_else(|| Utc::now()).naive_utc(),
+                        in_reply_to_url: if in_reply_to.is_some() {
+                            None
+                        } else {
+                            in_reply_to_id
+                        },
                         in_reply_to_id: in_reply_to.map(|s| s.id),
-                        in_reply_to_url: in_reply_to_id,
                         boot_of_id: None,
                         boost_of_url: None,
                         sensitive: false,
@@ -245,7 +253,7 @@ async fn _update_status(
                         deleted_at: None,
                         edited_at: None,
                         public: audiences.to_public,
-                        visible: audiences.to_public || audiences.cc_public
+                        visible: audiences.to_public || audiences.cc_public,
                     };
 
                     tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -278,7 +286,7 @@ async fn _update_status(
             }
 
             Ok(new_status)
-        },
+        }
         o => Err(TaskError::UnexpectedError(format!("Invalid object, not an status: {:?}", o)))
     }
 }
@@ -353,6 +361,7 @@ pub async fn create_announce(
             existing_status.visible = audiences.to_public || audiences.cc_public;
             if let Some(obj) = boost_of {
                 existing_status.boot_of_id = Some(obj.id);
+                existing_status.boost_of_url = None;
             }
 
             tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -363,7 +372,7 @@ pub async fn create_announce(
             })?;
 
             existing_status
-        },
+        }
         None => {
             let new_status = models::NewStatus {
                 id: status_id,
@@ -374,8 +383,8 @@ pub async fn create_announce(
                 updated_at: activity.common.updated.or(activity.common.published).unwrap_or_else(|| Utc::now()).naive_utc(),
                 in_reply_to_id: None,
                 in_reply_to_url: None,
+                boost_of_url: if boost_of.is_some() { None } else { Some(boost_of_id) },
                 boot_of_id: boost_of.map(|s| s.id),
-                boost_of_url: Some(boost_of_id),
                 sensitive: false,
                 spoiler_text: "".to_string(),
                 language: None,
@@ -384,7 +393,7 @@ pub async fn create_announce(
                 deleted_at: None,
                 edited_at: None,
                 public: audiences.to_public,
-                visible: audiences.to_public || audiences.cc_public
+                visible: audiences.to_public || audiences.cc_public,
             };
 
             tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -501,7 +510,7 @@ pub async fn insert_into_timelines(
                     diesel::insert_into(crate::schema::home_timeline::table)
                         .values(models::NewHomeTimelineEntry {
                             status_id: status.id,
-                            account_id: acct.id
+                            account_id: acct.id,
                         })
                         .execute(&c).with_expected_err(|| "Unable to insert into home timeline")?;
                 }
@@ -523,7 +532,7 @@ pub async fn insert_into_timelines(
                         diesel::insert_into(crate::schema::home_timeline::table)
                             .values(models::NewHomeTimelineEntry {
                                 status_id: status.id,
-                                account_id: acct.id
+                                account_id: acct.id,
                             })
                             .execute(&c).with_expected_err(|| "Unable to insert into home timeline")?;
                     }
@@ -532,6 +541,153 @@ pub async fn insert_into_timelines(
             }
         }
     }
+
+    Ok(())
+}
+
+struct ASAudiences {
+    to: Vec<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>,
+    cc: Vec<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>,
+    delivery_accounts: Vec<models::Account>
+}
+
+async fn make_audiences(status: &models::Status, resolve_delivery: bool) -> TaskResult<ASAudiences> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    let mut to = vec![];
+    let mut cc = vec![];
+    let mut delivery_accounts = vec![];
+
+    if status.public {
+        to.push(activity_streams::ReferenceOrObject::Reference("https://www.w3.org/ns/activitystreams#Public".to_string()));
+    } else if status.visible {
+        cc.push(activity_streams::ReferenceOrObject::Reference("https://www.w3.org/ns/activitystreams#Public".to_string()));
+    }
+
+    tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        let audiences = crate::schema::status_audiences::dsl::status_audiences.filter(
+            crate::schema::status_audiences::dsl::status_id.eq(status.id)
+        ).get_results::<models::StatusAudience>(&c).with_expected_err(|| "Unable to get boot audiences")?;
+
+        for aud in audiences {
+            let reference = if let Some(acct) = aud.account {
+                let a = crate::schema::accounts::dsl::accounts.find(acct)
+                    .get_result::<models::Account>(&c)
+                    .with_expected_err(|| "Unable to get account")?;
+                let r = a.actor_id(&config.uri);
+                if resolve_delivery {
+                    delivery_accounts.push(a);
+                }
+                r
+            } else if let Some(acct) = aud.account_followers {
+                let a = crate::schema::accounts::dsl::accounts.find(acct)
+                    .get_result::<models::Account>(&c)
+                    .with_expected_err(|| "Unable to get account")?;
+                let r = a.follower_collection(&config.uri);
+                if resolve_delivery {
+                    let f = crate::schema::following::dsl::following.filter(
+                        crate::schema::following::dsl::followee.eq(a.id)
+                    ).filter(
+                        crate::schema::following::dsl::pending.eq(false)
+                    ).inner_join(
+                        crate::schema::accounts::table.on(
+                            crate::schema::accounts::dsl::id.eq(crate::schema::following::dsl::follower)
+                        )
+                    ).get_results::<(models::Following, models::Account)>(&c)
+                        .with_expected_err(|| "Unable to get account followers")?.into_iter().map(|f| f.1);
+                    delivery_accounts.extend(f.into_iter());
+                }
+                r
+            } else {
+                continue
+            };
+
+            if aud.mention {
+                to.push(activity_streams::ReferenceOrObject::Reference(reference));
+            } else {
+                cc.push(activity_streams::ReferenceOrObject::Reference(reference));
+            }
+        }
+
+        Ok(())
+    })?;
+
+    Ok(ASAudiences {
+        to,
+        cc,
+        delivery_accounts
+    })
+}
+
+#[celery::task]
+pub async fn deliver_boost(
+    status: models::Status, boosted_status: models::Status, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let aud = make_audiences(&status, true).await?;
+
+    let activity = activity_streams::Object::Announce(activity_streams::ActivityCommon {
+        common: activity_streams::ObjectCommon {
+            id: Some(status.url(&config.uri)),
+            published: Some(Utc.from_utc_datetime(&status.created_at)),
+            to: activity_streams::Pluralisable::List(aud.to),
+            cc: activity_streams::Pluralisable::List(aud.cc),
+            ..Default::default()
+        },
+        actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        object: Some(activity_streams::ReferenceOrObject::Reference(boosted_status.url)),
+        target: None,
+        result: None,
+        origin: None,
+        instrument: None,
+    });
+
+    super::delivery::deliver_dedupe_inboxes(activity, aud.delivery_accounts, account).await?;
+
+    Ok(())
+}
+
+#[celery::task]
+pub async fn deliver_undo_boost(
+    status: models::Status, boosted_status: models::Status, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let aud = make_audiences(&status, true).await?;
+
+    let activity = activity_streams::Object::Undo(activity_streams::ActivityCommon {
+        common: activity_streams::ObjectCommon {
+            id: Some(format!("https://{}/as/transient/{}", config.uri, uuid::Uuid::new_v4())),
+            to: activity_streams::Pluralisable::List(aud.to.clone()),
+            published: status.deleted_at.as_ref().map(|d| Utc.from_utc_datetime(d)),
+            ..Default::default()
+        },
+        actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        object: Some(activity_streams::ReferenceOrObject::Object(Box::new(
+            activity_streams::ObjectOrLink::Object(activity_streams::Object::Announce(activity_streams::ActivityCommon {
+                common: activity_streams::ObjectCommon {
+                    id: Some(status.url(&config.uri)),
+                    published: Some(Utc.from_utc_datetime(&status.created_at)),
+                    to: activity_streams::Pluralisable::List(aud.to),
+                    cc: activity_streams::Pluralisable::List(aud.cc),
+                    ..Default::default()
+                },
+                actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+                object: Some(activity_streams::ReferenceOrObject::Reference(boosted_status.url)),
+                target: None,
+                result: None,
+                origin: None,
+                instrument: None,
+            }))
+        ))),
+        target: None,
+        result: None,
+        origin: None,
+        instrument: None,
+    });
+
+    super::delivery::deliver_dedupe_inboxes(activity, aud.delivery_accounts, account).await?;
 
     Ok(())
 }
