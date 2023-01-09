@@ -54,6 +54,8 @@ or `given_name` claim, if `preferred_username` is not available.
 - Undo follow
 - Announce note
 - Undo announce
+- Like note
+- Undo like note
 
 ## API endpoints implementation status
 
@@ -86,8 +88,8 @@ or `given_name` claim, if `preferred_username` is not available.
 
 ### bookmarks
 - [ ] GET /api/v1/bookmarks
-- [ ] POST /api/v1/statuses/:id/bookmark
-- [ ] POST /api/v1/statuses/:id/unbookmark
+- [x] POST /api/v1/statuses/:id/bookmark
+- [x] POST /api/v1/statuses/:id/unbookmark
 
 ### favourites
 - [ ] GET /api/v1/favourites
@@ -138,8 +140,8 @@ or `given_name` claim, if `preferred_username` is not available.
 
 ### endorsements
 - [ ] GET /api/v1/endorsements
-- [ ] POST /api/v1/accounts/:id/pin
-- [ ] POST /api/v1/accounts/:id/unpin
+- [x] POST /api/v1/accounts/:id/pin
+- [x] POST /api/v1/accounts/:id/unpin
 
 ### featured tags
 - [ ] GET /api/v1/featured_tags
@@ -169,15 +171,15 @@ or `given_name` claim, if `preferred_username` is not available.
 - [ ] DELETE /api/v1/statuses/:id
 - [x] GET /api/v1/statuses/:id/context
 - [x] GET /api/v1/statuses/:id/reblogged_by
-- [ ] GET /api/v1/statuses/:id/favourited_by
-- [ ] POST /api/v1/statuses/:id/favourite
-- [ ] POST /api/v1/statuses/:id/unfavourite 
+- [x] GET /api/v1/statuses/:id/favourited_by
+- [x] POST /api/v1/statuses/:id/favourite
+- [x] POST /api/v1/statuses/:id/unfavourite 
 - [x] POST /api/v1/statuses/:id/reblog
 - [x] POST /api/v1/statuses/:id/unreblog
 - [ ] POST /api/v1/statuses/:id/mute
 - [ ] POST /api/v1/statuses/:id/unmute
-- [ ] POST /api/v1/statuses/:id/pin
-- [ ] POST /api/v1/statuses/:id/unpin
+- [x] POST /api/v1/statuses/:id/pin
+- [x] POST /api/v1/statuses/:id/unpin
 - [ ] PUT /api/v1/statuses/:id
 - [ ] GET /api/v1/statuses/:id/history
 - [ ] GET /api/v1/statuses/:id/source

@@ -207,7 +207,7 @@ table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         in_reply_to_id -> Nullable<Uuid>,
-        boot_of_id -> Nullable<Uuid>,
+        boost_of_id -> Nullable<Uuid>,
         in_reply_to_url -> Nullable<Varchar>,
         boost_of_url -> Nullable<Varchar>,
         sensitive -> Bool,
@@ -255,6 +255,36 @@ table! {
     }
 }
 
+table! {
+    likes (id) {
+        id -> Uuid,
+        iid -> Int4,
+        status -> Uuid,
+        account -> Uuid,
+        created_at -> Timestamp,
+        url -> Nullable<Varchar>,
+        local -> Bool,
+    }
+}
+
+table! {
+    bookmarks (id) {
+        id -> Uuid,
+        iid -> Int4,
+        status -> Uuid,
+        account -> Uuid,
+    }
+}
+
+table! {
+    pins (id) {
+        id -> Uuid,
+        iid -> Int4,
+        status -> Uuid,
+        account -> Uuid,
+    }
+}
+
 joinable!(app_scopes -> apps (app_id));
 joinable!(oauth_consent_scopes -> oauth_consents (consent_id));
 joinable!(oauth_code_scopes -> oauth_codes (code_id));
@@ -291,4 +321,7 @@ allow_tables_to_appear_in_same_query!(
     status_media_attachments,
     home_timeline,
     public_timeline,
+    likes,
+    bookmarks,
+    pins,
 );

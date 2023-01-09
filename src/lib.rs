@@ -140,6 +140,8 @@ pub async fn setup() -> App {
             tasks::statuses::insert_into_timelines,
             tasks::statuses::deliver_boost,
             tasks::statuses::deliver_undo_boost,
+            tasks::statuses::deliver_like,
+            tasks::statuses::deliver_undo_like,
         ],
         task_routes = [],
         prefetch_count = 2,

@@ -243,7 +243,7 @@ async fn _update_status(
                             in_reply_to_id
                         },
                         in_reply_to_id: in_reply_to.map(|s| s.id),
-                        boot_of_id: None,
+                        boost_of_id: None,
                         boost_of_url: None,
                         sensitive: false,
                         spoiler_text: o.summary.unwrap_or_default(),
@@ -360,7 +360,7 @@ pub async fn create_announce(
             existing_status.public = audiences.to_public;
             existing_status.visible = audiences.to_public || audiences.cc_public;
             if let Some(obj) = boost_of {
-                existing_status.boot_of_id = Some(obj.id);
+                existing_status.boost_of_id = Some(obj.id);
                 existing_status.boost_of_url = None;
             }
 
@@ -384,7 +384,7 @@ pub async fn create_announce(
                 in_reply_to_id: None,
                 in_reply_to_url: None,
                 boost_of_url: if boost_of.is_some() { None } else { Some(boost_of_id) },
-                boot_of_id: boost_of.map(|s| s.id),
+                boost_of_id: boost_of.map(|s| s.id),
                 sensitive: false,
                 spoiler_text: "".to_string(),
                 language: None,
@@ -660,6 +660,7 @@ pub async fn deliver_undo_boost(
         common: activity_streams::ObjectCommon {
             id: Some(format!("https://{}/as/transient/{}", config.uri, uuid::Uuid::new_v4())),
             to: activity_streams::Pluralisable::List(aud.to.clone()),
+            cc: activity_streams::Pluralisable::List(aud.cc.clone()),
             published: status.deleted_at.as_ref().map(|d| Utc.from_utc_datetime(d)),
             ..Default::default()
         },
@@ -688,6 +689,125 @@ pub async fn deliver_undo_boost(
     });
 
     super::delivery::deliver_dedupe_inboxes(activity, aud.delivery_accounts, account).await?;
+
+    Ok(())
+}
+
+#[celery::task]
+pub async fn deliver_like(
+    like: models::Like, liked_status: models::Status, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    let liked_status_account = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::accounts::dsl::accounts.find(liked_status.account_id)
+            .get_result::<models::Account>(&c).with_expected_err(|| "Unable to get account")
+    })?;
+
+    let mut aud = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::accounts::dsl::accounts.filter(
+            crate::schema::accounts::dsl::id.eq_any(
+                crate::schema::following::dsl::following.filter(
+                    crate::schema::following::dsl::followee.eq(account.id)
+                ).select(crate::schema::following::dsl::follower)
+            )
+        ).get_results::<models::Account>(&c).with_expected_err(|| "Unable to get followers")
+    })?;
+    aud.push(liked_status_account.clone());
+
+    let activity = activity_streams::Object::Like(activity_streams::ActivityCommon {
+        common: activity_streams::ObjectCommon {
+            id: Some(like.url(&config.uri)),
+            published: Some(Utc.from_utc_datetime(&like.created_at)),
+            to: activity_streams::Pluralisable::Object(activity_streams::ReferenceOrObject::Reference(
+                liked_status_account.actor_id(&config.uri)
+            )),
+            cc: activity_streams::Pluralisable::Object(activity_streams::ReferenceOrObject::Reference(
+                account.follower_collection(&config.uri)
+            )),
+            ..Default::default()
+        },
+        actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        object: Some(activity_streams::ReferenceOrObject::Reference(liked_status.url)),
+        target: None,
+        result: None,
+        origin: None,
+        instrument: None,
+    });
+
+    super::delivery::deliver_dedupe_inboxes(activity, aud, account).await?;
+
+    Ok(())
+}
+
+#[celery::task]
+pub async fn deliver_undo_like(
+    like: models::Like, liked_status: models::Status, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    let liked_status_account = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::accounts::dsl::accounts.find(liked_status.account_id)
+            .get_result::<models::Account>(&c).with_expected_err(|| "Unable to get account")
+    })?;
+
+    let mut aud = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::accounts::dsl::accounts.filter(
+            crate::schema::accounts::dsl::id.eq_any(
+                crate::schema::following::dsl::following.filter(
+                    crate::schema::following::dsl::followee.eq(account.id)
+                ).select(crate::schema::following::dsl::follower)
+            )
+        ).get_results::<models::Account>(&c).with_expected_err(|| "Unable to get followers")
+    })?;
+    aud.push(liked_status_account.clone());
+
+    let activity = activity_streams::Object::Undo(activity_streams::ActivityCommon {
+        common: activity_streams::ObjectCommon {
+            id: Some(format!("https://{}/as/transient/{}", config.uri, uuid::Uuid::new_v4())),
+            to: activity_streams::Pluralisable::Object(activity_streams::ReferenceOrObject::Reference(
+                liked_status_account.actor_id(&config.uri)
+            )),
+            cc: activity_streams::Pluralisable::Object(activity_streams::ReferenceOrObject::Reference(
+                account.follower_collection(&config.uri)
+            )),
+            ..Default::default()
+        },
+        actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        object: Some(activity_streams::ReferenceOrObject::Object(Box::new(
+            activity_streams::ObjectOrLink::Object(activity_streams::Object::Like(activity_streams::ActivityCommon {
+                common: activity_streams::ObjectCommon {
+                    id: Some(like.url(&config.uri)),
+                    published: Some(Utc.from_utc_datetime(&like.created_at)),
+                    to: activity_streams::Pluralisable::Object(activity_streams::ReferenceOrObject::Reference(
+                        liked_status_account.actor_id(&config.uri)
+                    )),
+                    cc: activity_streams::Pluralisable::Object(activity_streams::ReferenceOrObject::Reference(
+                        account.follower_collection(&config.uri)
+                    )),
+                    ..Default::default()
+                },
+                actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+                object: Some(activity_streams::ReferenceOrObject::Reference(liked_status.url)),
+                target: None,
+                result: None,
+                origin: None,
+                instrument: None,
+            }))
+        ))),
+        target: None,
+        result: None,
+        origin: None,
+        instrument: None,
+    });
+
+    super::delivery::deliver_dedupe_inboxes(activity, aud, account).await?;
 
     Ok(())
 }

@@ -289,7 +289,7 @@ pub struct Status {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub in_reply_to_id: Option<uuid::Uuid>,
-    pub boot_of_id: Option<uuid::Uuid>,
+    pub boost_of_id: Option<uuid::Uuid>,
     pub in_reply_to_url: Option<String>,
     pub boost_of_url: Option<String>,
     pub sensitive: bool,
@@ -306,7 +306,7 @@ pub struct Status {
 impl Status {
     pub fn url(&self, uri: &str) -> String {
         if self.local {
-            if self.boot_of_id.is_some() {
+            if self.boost_of_id.is_some() {
                 format!("https://{}/as/status/{}/activity", uri, self.id)
             } else {
                 format!("https://{}/as/status/{}", uri, self.id)
@@ -327,7 +327,7 @@ pub struct NewStatus {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub in_reply_to_id: Option<uuid::Uuid>,
-    pub boot_of_id: Option<uuid::Uuid>,
+    pub boost_of_id: Option<uuid::Uuid>,
     pub in_reply_to_url: Option<String>,
     pub boost_of_url: Option<String>,
     pub sensitive: bool,
@@ -385,4 +385,71 @@ pub struct PublicTimelineEntry {
 #[table_name="public_timeline"]
 pub struct NewPublicTimelineEntry {
     pub status_id: uuid::Uuid,
+}
+
+#[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="likes"]
+pub struct Like {
+    pub id: uuid::Uuid,
+    pub iid: i32,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
+    pub created_at: chrono::NaiveDateTime,
+    pub url: Option<String>,
+    pub local: bool,
+}
+
+impl Like {
+    pub fn url(&self, uri: &str) -> String {
+        if self.local {
+            format!("https://{}/as/like/{}", uri, self.id)
+        } else {
+            self.url.clone().unwrap_or_default()
+        }
+    }
+}
+
+#[derive(Insertable, Clone, Debug)]
+#[table_name="likes"]
+pub struct NewLike {
+    pub id: uuid::Uuid,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
+    pub created_at: chrono::NaiveDateTime,
+    pub url: Option<String>,
+    pub local: bool,
+}
+
+#[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="bookmarks"]
+pub struct Bookmark {
+    pub id: uuid::Uuid,
+    pub iid: i32,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
+}
+
+#[derive(Insertable, Clone, Debug)]
+#[table_name="bookmarks"]
+pub struct NewBookmark {
+    pub id: uuid::Uuid,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
+}
+
+#[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="pins"]
+pub struct Pin {
+    pub id: uuid::Uuid,
+    pub iid: i32,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
+}
+
+#[derive(Insertable, Clone, Debug)]
+#[table_name="pins"]
+pub struct NewPin {
+    pub id: uuid::Uuid,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
 }

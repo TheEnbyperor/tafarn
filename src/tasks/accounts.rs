@@ -553,21 +553,17 @@ pub async fn update_account_relations(
                 i.id().map(|s| s.to_string())
             ));
 
-        let mut s = futures::stream::iter(to_fetch)
-            .map(|item| async move {
-                (item.id().map(|s| s.to_string()), find_account(item, false).await)
-            })
-            .buffer_unordered(5);
-        while let Some((id, account)) = s.next().await {
-            match account {
-                Ok(Some(account)) => if let Some(id) = id {
+        for item in to_fetch {
+            let item_id = item.id().map(|s| s.to_string());
+            match find_account(item, false).await {
+                Ok(Some(account)) => if let Some(id) = item_id {
                     accounts.insert(id.to_string(), account);
                 },
                 Ok(None) => {
-                    error!("Unable to fetch account {:?}", id);
+                    error!("Unable to fetch account {:?}", item_id.unwrap_or_else(|| "<no id>".to_string()));
                 },
                 Err(e) => {
-                    error!("Unable to fetch account {:?}: {}", id, e);
+                    error!("Unable to fetch account {:?}: {}", item_id.unwrap_or_else(|| "<no id>".to_string()), e);
                 }
             }
         }

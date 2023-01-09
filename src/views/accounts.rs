@@ -408,23 +408,103 @@ pub async fn account(
     Ok(rocket::serde::json::Json(render_account(config, &db, account).await?))
 }
 
-#[get("/api/v1/accounts/<account_id>/statuses?<limit>&<exclude_replies>&<only_media>&<exclude_reblogs>&<pinned>")]
+#[get("/api/v1/accounts/<account_id>/statuses?<limit>&<exclude_replies>&<only_media>&<exclude_reblogs>&<pinned>&<min_id>&<max_id>")]
 pub async fn account_statuses(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
+    user: Option<super::oauth::TokenClaims>,
     limit: Option<u64>, exclude_replies: Option<&str>, only_media: Option<&str>,
-    exclude_reblogs: Option<&str>, pinned: Option<&str>
-) -> Result<rocket::serde::json::Json<Vec<super::objs::Status>>, rocket::http::Status> {
-    let account_id = match account_id.parse::<i32>() {
-        Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+    exclude_reblogs: Option<&str>, pinned: Option<&str>,
+    max_id: Option<i32>, min_id: Option<i32>,
+    host: &rocket::http::uri::Host<'_>,
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
+    let account = get_account_from_db(&account_id, &db).await?;
+    let req_account = match &user {
+        Some(u) => Some(get_account(&db, u).await?),
+        None => None
     };
 
-    let _exclude_replies = super::parse_bool(exclude_replies, true)?;
+    let exclude_replies = super::parse_bool(exclude_replies, false)?;
     let _only_media = super::parse_bool(only_media, false)?;
-    let _exclude_reblogs = super::parse_bool(exclude_reblogs, false)?;
-    let _pinned = super::parse_bool(exclude_replies, false)?;
+    let exclude_reblogs = super::parse_bool(exclude_reblogs, false)?;
+    let pinned = super::parse_bool(pinned, false)?;
 
-    Ok(rocket::serde::json::Json(vec![]))
+    let limit = limit.unwrap_or(20);
+    if limit > 500 {
+        return Err(rocket::http::Status::BadRequest);
+    }
+
+    let statuses: Vec<crate::models::Status> =
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            let mut sel = crate::schema::statuses::dsl::statuses.order_by(
+                crate::schema::statuses::dsl::created_at.desc()
+            ).filter(
+                crate::schema::statuses::dsl::account_id.eq(&account.id)
+            ).filter(
+                crate::schema::statuses::dsl::deleted_at.is_null()
+            ).filter(
+                crate::schema::statuses::dsl::boost_of_url.is_null()
+            ).limit(limit as i64).into_boxed();
+            if let Some(min_id) = min_id {
+                sel = sel.filter(crate::schema::statuses::dsl::iid.gt(min_id));
+            }
+            if let Some(max_id) = max_id {
+                sel = sel.filter(crate::schema::statuses::dsl::iid.lt(max_id));
+            }
+            if exclude_replies {
+                sel = sel.filter(
+                    crate::schema::statuses::dsl::in_reply_to_id.is_null().and(
+                        crate::schema::statuses::dsl::in_reply_to_url.is_null()
+                    )
+                );
+            }
+            if exclude_reblogs {
+                sel = sel.filter(
+                    crate::schema::statuses::dsl::boost_of_id.is_null().and(
+                        crate::schema::statuses::dsl::boost_of_url.is_null()
+                    )
+                );
+            }
+            if pinned {
+                sel = sel.filter(crate::schema::statuses::dsl::id.eq_any(
+                    crate::schema::pins::dsl::pins.filter(
+                        crate::schema::pins::dsl::account.eq(&account.id)
+                    ).select(crate::schema::pins::dsl::status)
+                ));
+            }
+            sel.get_results(c)
+        }).await?;
+
+    let mut out_statuses = vec![];
+    for status in statuses {
+        if super::statuses::can_view(&status, req_account.as_ref(), &db).await? {
+            out_statuses.push(status);
+        }
+    }
+
+    let mut links = vec![];
+
+    if let Some(last_id) = out_statuses.last().map(|a| a.iid) {
+        links.push(super::Link {
+            rel: "next".to_string(),
+            href: format!("https://{}/api/v1/accounts/{}/statuses?max_id={}", host.to_string(), account_id, last_id)
+        });
+    }
+    if let Some(first_id) = out_statuses.first().map(|a| a.iid) {
+        links.push(super::Link {
+            rel: "prev".to_string(),
+            href: format!("https://{}/api/v1/accounts/{}/statuses?min_id={}", host.to_string(), account_id, first_id)
+        });
+    }
+
+    Ok(super::LinkedResponse {
+        inner: rocket::serde::json::Json(
+            futures::stream::iter(out_statuses).map(|status| {
+                super::statuses::render_status(config, &db, status, req_account.as_ref())
+            }).buffered(10).collect::<Vec<_>>().await
+                .into_iter().collect::<Result<Vec<_>, _>>()?
+        ),
+        links
+    })
 }
 
 #[get("/api/v1/accounts/<account_id>/followers?<limit>&<min_id>&<max_id>")]

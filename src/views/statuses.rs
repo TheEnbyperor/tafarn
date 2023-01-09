@@ -46,7 +46,7 @@ pub async fn render_status(
         None => None
     };
 
-    let boost = match status.boot_of_id {
+    let boost = match status.boost_of_id {
         Some(id) => Some(crate::db_run(db, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(id)
                 .get_result::<models::Status>(c)
@@ -56,7 +56,7 @@ pub async fn render_status(
 
     let (boost_count, replies_count) = crate::db_run(&db, move |c| -> QueryResult<_> {
         let bc = crate::schema::statuses::dsl::statuses.filter(
-            crate::schema::statuses::dsl::boot_of_id.eq(status.id)
+            crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
             crate::schema::statuses::dsl::deleted_at.is_null()
         ).count().get_result::<i64>(c)?;
@@ -70,12 +70,12 @@ pub async fn render_status(
 
     let boosted = match req_account_id {
         Some(account) => {
-            if status.account_id == account && status.boot_of_id.is_some() {
+            if status.account_id == account && status.boost_of_id.is_some() {
                 Some(true)
             } else {
                 Some(crate::db_run(db, move |c| -> QueryResult<_> {
                     crate::schema::statuses::dsl::statuses.filter(
-                        crate::schema::statuses::dsl::boot_of_id.eq(status.id)
+                        crate::schema::statuses::dsl::boost_of_id.eq(status.id)
                     ).filter(
                         crate::schema::statuses::dsl::account_id.eq(account)
                     ).filter(
@@ -83,6 +83,42 @@ pub async fn render_status(
                     ).count().get_result::<i64>(c)
                 }).await? > 0)
             }
+        },
+        None => None
+    };
+    let liked = match req_account_id {
+        Some(account) => {
+            Some(crate::db_run(&db, move |c| -> QueryResult<_> {
+                crate::schema::likes::dsl::likes.filter(
+                    crate::schema::likes::dsl::status.eq(status.id)
+                ).filter(
+                    crate::schema::likes::dsl::account.eq(account)
+                ).count().get_result::<i64>(c)
+            }).await? > 0)
+        },
+        None => None
+    };
+    let bookmarked = match req_account_id {
+        Some(account) => {
+            Some(crate::db_run(&db, move |c| -> QueryResult<_> {
+                crate::schema::bookmarks::dsl::bookmarks.filter(
+                    crate::schema::bookmarks::dsl::status.eq(status.id)
+                ).filter(
+                    crate::schema::bookmarks::dsl::account.eq(account)
+                ).count().get_result::<i64>(c)
+            }).await? > 0)
+        },
+        None => None
+    };
+    let pinned = match req_account_id {
+        Some(account) => {
+            Some(crate::db_run(&db, move |c| -> QueryResult<_> {
+                crate::schema::pins::dsl::pins.filter(
+                    crate::schema::pins::dsl::status.eq(status.id)
+                ).filter(
+                    crate::schema::pins::dsl::account.eq(account)
+                ).count().get_result::<i64>(c)
+            }).await? > 0)
         },
         None => None
     };
@@ -114,16 +150,60 @@ pub async fn render_status(
         card: None,
         language: status.language,
         edited_at: status.edited_at.map(|x| Utc.from_utc_datetime(&x)),
-        favourited: req_account.map(|_| false),
+        favourited: liked,
         reblogged: boosted,
         muted: req_account.map(|_| false),
-        bookmarked: req_account.map(|_| false),
-        pinned: req_account.map(|_| false),
+        bookmarked,
+        pinned,
     })
 }
 
+pub async fn can_view(
+    status: &models::Status, account: Option<&models::Account>, db: &crate::DbConn
+) -> Result<bool, rocket::http::Status> {
+    if status.visible {
+        Ok(true)
+    } else {
+        if let Some(account) = account {
+            if account.id == status.account_id {
+                return Ok(true);
+            }
+
+            let account_id = account.id;
+            let status_id = status.id;
+            if crate::db_run(db, move |c| -> QueryResult<_> {
+                crate::schema::status_audiences::dsl::status_audiences.filter(
+                    crate::schema::status_audiences::dsl::status_id.eq(&status_id)
+                ).filter(
+                    crate::schema::status_audiences::dsl::account.eq(&account_id)
+                ).count().get_result::<i64>(c)
+            }).await? > 0 {
+                return Ok(true);
+            }
+
+            if crate::db_run(db, move |c| -> QueryResult<_> {
+                crate::schema::status_audiences::dsl::status_audiences.filter(
+                    crate::schema::status_audiences::dsl::status_id.eq(&status_id)
+                ).inner_join(crate::schema::following::table.on(
+                    crate::schema::status_audiences::dsl::account_followers.eq(
+                        crate::schema::following::dsl::followee.nullable()
+                    )
+                )).filter(
+                    crate::schema::following::dsl::follower.eq(&account_id)
+                ).count().get_result::<i64>(c)
+            }).await? > 0 {
+                return Ok(true);
+            }
+
+            Ok(false)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
 async fn get_status_and_check_visibility(
-    status_id: &str, account: Option<&crate::models::Account>,
+    status_id: &str, account: Option<&models::Account>,
     db: &crate::DbConn,
 ) -> Result<crate::models::Status, rocket::http::Status> {
     let status_id = match status_id.parse::<i32>() {
@@ -134,8 +214,7 @@ async fn get_status_and_check_visibility(
     let status = match crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::statuses::dsl::statuses.filter(
             crate::schema::statuses::dsl::iid.eq(status_id)
-        )
-            .get_result::<crate::models::Status>(c).optional()
+        ).get_result::<models::Status>(c).optional()
     }).await? {
         Some(m) => m,
         None => return Err(rocket::http::Status::NotFound)
@@ -145,43 +224,10 @@ async fn get_status_and_check_visibility(
         return Err(rocket::http::Status::Gone);
     }
 
-    if status.visible {
+    if can_view(&status, account, db).await? {
         Ok(status)
     } else {
-        if let Some(account) = account {
-            if account.id == status.account_id {
-                return Ok(status);
-            }
-
-            let account_id = account.id;
-            if crate::db_run(db, move |c| -> QueryResult<_> {
-                crate::schema::status_audiences::dsl::status_audiences.filter(
-                    crate::schema::status_audiences::dsl::status_id.eq(status.id)
-                ).filter(
-                    crate::schema::status_audiences::dsl::account.eq(&account_id)
-                ).count().get_result::<i64>(c)
-            }).await? > 0 {
-                return Ok(status);
-            }
-
-            if crate::db_run(db, move |c| -> QueryResult<_> {
-                crate::schema::status_audiences::dsl::status_audiences.filter(
-                    crate::schema::status_audiences::dsl::status_id.eq(status.id)
-                ).inner_join(crate::schema::following::table.on(
-                    crate::schema::status_audiences::dsl::account_followers.eq(
-                        crate::schema::following::dsl::followee.nullable()
-                    )
-                )).filter(
-                    crate::schema::following::dsl::follower.eq(&account_id)
-                ).count().get_result::<i64>(c)
-            }).await? > 0 {
-                return Ok(status);
-            }
-
-            Err(rocket::http::Status::NotFound)
-        } else {
-            Err(rocket::http::Status::NotFound)
-        }
+        Err(rocket::http::Status::NotFound)
     }
 }
 
@@ -270,7 +316,6 @@ pub async fn status_context(
     }))
 }
 
-
 #[get("/api/v1/statuses/<status_id>/reblogged_by?<limit>&<min_id>&<max_id>")]
 pub async fn status_boosted_by(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
@@ -297,7 +342,7 @@ pub async fn status_boosted_by(
 
     let boosted_by = crate::db_run(&db, move |c| -> QueryResult<_> {
         let mut sel = crate::schema::statuses::dsl::statuses.filter(
-            crate::schema::statuses::dsl::boot_of_id.eq(status.id)
+            crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
             crate::schema::statuses::dsl::deleted_at.is_null()
         ).inner_join(
@@ -306,12 +351,12 @@ pub async fn status_boosted_by(
             )
         ).order_by(crate::schema::accounts::dsl::iid.desc()).limit(limit as i64).into_boxed();
         if let Some(min_id) = min_id {
-            sel = sel.filter(crate::schema::statuses::dsl::iid.gt(min_id));
+            sel = sel.filter(crate::schema::accounts::dsl::iid.gt(min_id));
         }
         if let Some(max_id) = max_id {
-            sel = sel.filter(crate::schema::statuses::dsl::iid.lt(max_id));
+            sel = sel.filter(crate::schema::accounts::dsl::iid.lt(max_id));
         }
-        sel.get_results::<(crate::models::Status, crate::models::Account)>(c)
+        sel.get_results::<(models::Status, models::Account)>(c)
     }).await?;
 
     let mut links = vec![];
@@ -326,6 +371,71 @@ pub async fn status_boosted_by(
         links.push(super::Link {
             rel: "prev".to_string(),
             href: format!("https://{}/api/v1/statuses/{}/reblogged_by?max_id={}", host.to_string(), status_id, first_id)
+        });
+    }
+
+    Ok(super::LinkedResponse {
+        inner: rocket::serde::json::Json(futures::stream::iter(boosted_by.into_iter()).map(|(_, a)| {
+            super::accounts::render_account(config, &db, a)
+        }).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?),
+        links
+    })
+}
+
+
+#[get("/api/v1/statuses/<status_id>/favourited_by?<limit>&<min_id>&<max_id>")]
+pub async fn status_liked_by(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
+    user: Option<super::oauth::TokenClaims>, status_id: String,
+    limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, rocket::http::Status> {
+    if let Some(user) = &user {
+        if !user.has_scope("read:statuses") {
+            return Err(rocket::http::Status::Forbidden);
+        }
+    }
+
+    let account = match &user {
+        Some(u) => Some(super::accounts::get_account(&db, u).await?),
+        None => None
+    };
+
+    let limit = limit.unwrap_or(40);
+    if limit > 500 {
+        return Err(rocket::http::Status::BadRequest);
+    }
+
+    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db).await?;
+
+    let boosted_by = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let mut sel = crate::schema::likes::dsl::likes.filter(
+            crate::schema::likes::dsl::status.eq(status.id)
+        ).inner_join(
+            crate::schema::accounts::table.on(
+                crate::schema::accounts::dsl::id.eq(crate::schema::likes::dsl::account)
+            )
+        ).order_by(crate::schema::likes::dsl::iid.desc()).limit(limit as i64).into_boxed();
+        if let Some(min_id) = min_id {
+            sel = sel.filter(crate::schema::likes::dsl::iid.gt(min_id));
+        }
+        if let Some(max_id) = max_id {
+            sel = sel.filter(crate::schema::likes::dsl::iid.lt(max_id));
+        }
+        sel.get_results::<(models::Like, models::Account)>(c)
+    }).await?;
+
+    let mut links = vec![];
+
+    if let Some(last_id) = boosted_by.first().map(|a| a.0.iid) {
+        links.push(super::Link {
+            rel: "next".to_string(),
+            href: format!("https://{}/api/v1/statuses/{}/favourited_by?min_id={}", host.to_string(), status_id, last_id)
+        });
+    }
+    if let Some(first_id) = boosted_by.last().map(|a| a.0.iid) {
+        links.push(super::Link {
+            rel: "prev".to_string(),
+            href: format!("https://{}/api/v1/statuses/{}/favourited_by?max_id={}", host.to_string(), status_id, first_id)
         });
     }
 
@@ -357,7 +467,7 @@ pub async fn boost_status(
 
     if let Some(status) = crate::db_run(&db, move |c| -> QueryResult<_> {
         crate::schema::statuses::dsl::statuses.filter(
-            crate::schema::statuses::dsl::boot_of_id.eq(status.id)
+            crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
             crate::schema::statuses::dsl::account_id.eq(&account.id)
         ).filter(
@@ -392,7 +502,7 @@ pub async fn boost_status(
         in_reply_to_id: None,
         in_reply_to_url: None,
         boost_of_url: None,
-        boot_of_id: Some(status.id),
+        boost_of_id: Some(status.id),
         sensitive: false,
         spoiler_text: "".to_string(),
         language: None,
@@ -457,7 +567,7 @@ pub async fn unboost_status(
 
     let mut boost_status: models::Status = match crate::db_run(&db, move |c| -> QueryResult<_> {
         crate::schema::statuses::dsl::statuses.filter(
-            crate::schema::statuses::dsl::boot_of_id.eq(status.id)
+            crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
             crate::schema::statuses::dsl::account_id.eq(&account.id)
         ).filter(
@@ -485,6 +595,214 @@ pub async fn unboost_status(
             return Err(rocket::http::Status::InternalServerError);
         }
     };
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
+
+#[post("/api/v1/statuses/<status_id>/favourite")]
+pub async fn like_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    status_id: String, celery: &rocket::State<crate::CeleryApp>
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:favourites") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    if crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::schema::likes::dsl::likes.filter(
+            crate::schema::likes::dsl::status.eq(status.id)
+        ).filter(
+            crate::schema::likes::dsl::account.eq(&account.id)
+        ).count().get_result::<i64>(c)
+    }).await? > 0 {
+        return Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?));
+    }
+
+    let new_like = models::NewLike {
+        id: uuid::Uuid::new_v4(),
+        account: account.id,
+        status: status.id,
+        created_at: Utc::now().naive_utc(),
+        local: true,
+        url: None,
+    };
+    let like = crate::db_run(&db, move |c| -> QueryResult<_> {
+        diesel::insert_into(crate::schema::likes::dsl::likes)
+            .values(new_like)
+            .get_result::<models::Like>(c)
+    }).await?;
+
+    match celery.send_task(
+        super::super::tasks::statuses::deliver_like::new(like, status.clone(), account.clone())
+    ).await {
+        Ok(_) => {}
+        Err(err) => {
+            error!("Failed to submit celery task: {:?}", err);
+            return Err(rocket::http::Status::InternalServerError);
+        }
+    };
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
+
+#[post("/api/v1/statuses/<status_id>/unfavourite")]
+pub async fn unlike_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    status_id: String, celery: &rocket::State<crate::CeleryApp>
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:favourites") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    if let Some(like) = crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::schema::likes::dsl::likes.filter(
+            crate::schema::likes::dsl::status.eq(status.id)
+        ).filter(
+            crate::schema::likes::dsl::account.eq(&account.id)
+        ).get_result::<models::Like>(c).optional()
+    }).await? {
+        let like_id = like.id;
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            diesel::delete(crate::schema::likes::dsl::likes.find(like_id))
+                .execute(c)
+        }).await?;
+
+        match celery.send_task(
+            super::super::tasks::statuses::deliver_undo_like::new(like, status.clone(), account.clone())
+        ).await {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Failed to submit celery task: {:?}", err);
+                return Err(rocket::http::Status::InternalServerError);
+            }
+        };
+    }
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
+
+#[post("/api/v1/statuses/<status_id>/bookmark")]
+pub async fn bookmark_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    status_id: String
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:bookmarks") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    if crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::schema::bookmarks::dsl::bookmarks.filter(
+            crate::schema::bookmarks::dsl::status.eq(status.id)
+        ).filter(
+            crate::schema::bookmarks::dsl::account.eq(&account.id)
+        ).count().get_result::<i64>(c)
+    }).await? > 0 {
+        return Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?));
+    }
+
+    let new_bookmark = models::NewBookmark {
+        id: uuid::Uuid::new_v4(),
+        account: account.id,
+        status: status.id,
+    };
+    crate::db_run(&db, move |c| -> QueryResult<_> {
+        diesel::insert_into(crate::schema::bookmarks::dsl::bookmarks)
+            .values(new_bookmark)
+            .execute(c)
+    }).await?;
+
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
+
+#[post("/api/v1/statuses/<status_id>/unbookmark")]
+pub async fn unbookmark_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    status_id: String,
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:bookmarks") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    crate::db_run(&db, move |c| -> QueryResult<_> {
+        diesel::delete(crate::schema::bookmarks::dsl::bookmarks.filter(
+            crate::schema::bookmarks::dsl::status.eq(status.id)
+        ).filter(
+            crate::schema::bookmarks::dsl::account.eq(&account.id)
+        )).execute(c)
+    }).await?;
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
+
+#[post("/api/v1/statuses/<status_id>/pin")]
+pub async fn pin_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    status_id: String
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:accounts") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    if crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::schema::pins::dsl::pins.filter(
+            crate::schema::pins::dsl::status.eq(status.id)
+        ).filter(
+            crate::schema::pins::dsl::account.eq(&account.id)
+        ).count().get_result::<i64>(c)
+    }).await? > 0 {
+        return Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?));
+    }
+
+    let new_pin = models::NewPin {
+        id: uuid::Uuid::new_v4(),
+        account: account.id,
+        status: status.id,
+    };
+    crate::db_run(&db, move |c| -> QueryResult<_> {
+        diesel::insert_into(crate::schema::pins::dsl::pins)
+            .values(new_pin)
+            .execute(c)
+    }).await?;
+
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
+
+#[post("/api/v1/statuses/<status_id>/unpin")]
+pub async fn unpin_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    status_id: String,
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:accounts") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    crate::db_run(&db, move |c| -> QueryResult<_> {
+        diesel::delete(crate::schema::pins::dsl::pins.filter(
+            crate::schema::pins::dsl::status.eq(status.id)
+        ).filter(
+            crate::schema::pins::dsl::account.eq(&account.id)
+        )).execute(c)
+    }).await?;
 
     Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
 }
