@@ -392,11 +392,12 @@ pub struct NewPublicTimelineEntry {
 pub struct Like {
     pub id: uuid::Uuid,
     pub iid: i32,
-    pub status: uuid::Uuid,
+    pub status: Option<uuid::Uuid>,
     pub account: uuid::Uuid,
     pub created_at: chrono::NaiveDateTime,
     pub url: Option<String>,
     pub local: bool,
+    pub status_url: Option<String>,
 }
 
 impl Like {
@@ -413,11 +414,12 @@ impl Like {
 #[table_name="likes"]
 pub struct NewLike {
     pub id: uuid::Uuid,
-    pub status: uuid::Uuid,
+    pub status: Option<uuid::Uuid>,
     pub account: uuid::Uuid,
     pub created_at: chrono::NaiveDateTime,
     pub url: Option<String>,
     pub local: bool,
+    pub status_url: Option<String>,
 }
 
 #[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]

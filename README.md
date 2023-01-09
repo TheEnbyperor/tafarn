@@ -47,6 +47,8 @@ or `given_name` claim, if `preferred_username` is not available.
 - Announce note
 - Undo announce
 - Delete note
+- Like note
+- Undo like note
 
 ### Events the server can send
 - Accept follow

@@ -624,7 +624,8 @@ pub async fn like_status(
     let new_like = models::NewLike {
         id: uuid::Uuid::new_v4(),
         account: account.id,
-        status: status.id,
+        status: Some(status.id),
+        status_url: None,
         created_at: Utc::now().naive_utc(),
         local: true,
         url: None,

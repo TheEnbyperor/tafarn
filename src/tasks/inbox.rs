@@ -119,6 +119,11 @@ async fn _process_activity(activity: activity_streams::Object, signature: Option
                         super::statuses::create_announce::new(a, account)
                     ).await.with_expected_err(|| "Unable to send task")?;
                 }
+                activity_streams::Object::Like(a) => {
+                    celery.send_task(
+                        super::statuses::create_like::new(a, account)
+                    ).await.with_expected_err(|| "Unable to send task")?;
+                }
                 activity_streams::Object::Follow(a) => {
                     celery.send_task(
                         super::relationships::process_follow::new(a, account)
@@ -165,6 +170,11 @@ async fn _process_activity(activity: activity_streams::Object, signature: Option
                                 Some(activity_streams::Object::Announce(a)) => {
                                     celery.send_task(
                                         super::statuses::undo_announce::new(a.clone(), account)
+                                    ).await.with_expected_err(|| "Unable to send task")?;
+                                }
+                                Some(activity_streams::Object::Like(a)) => {
+                                    celery.send_task(
+                                        super::statuses::undo_like::new(a.clone(), account)
                                     ).await.with_expected_err(|| "Unable to send task")?;
                                 }
                                 Some(_) => {

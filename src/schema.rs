@@ -259,11 +259,12 @@ table! {
     likes (id) {
         id -> Uuid,
         iid -> Int4,
-        status -> Uuid,
+        status -> Nullable<Uuid>,
         account -> Uuid,
         created_at -> Timestamp,
         url -> Nullable<Varchar>,
         local -> Bool,
+        status_url -> Nullable<Varchar>,
     }
 }
 

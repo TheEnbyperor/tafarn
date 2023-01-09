@@ -428,6 +428,59 @@ pub async fn create_announce(
     Ok(())
 }
 
+#[celery::task]
+pub async fn create_like(
+    activity: activity_streams::ActivityCommon, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    let id = match &activity.common.id {
+        Some(id) => id,
+        None => return Err(TaskError::UnexpectedError(format!("Announce has no ID: {:?}", activity)))
+    };
+    if tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::likes::dsl::likes.filter(
+            crate::schema::likes::dsl::url.eq(&id)
+        ).count().get_result::<i64>(&c).with_expected_err(|| "Unable to fetch like")
+    })? == 0 {
+        let like_of_object = match activity.object {
+            Some(obj) => obj,
+            None => return Err(TaskError::UnexpectedError(format!("Like has no object: {:?}", activity)))
+        };
+        let like_of_id = match like_of_object.id() {
+            Some(o) => o.to_string(),
+            None => return Err(TaskError::UnexpectedError(format!("Like object has no ID")))
+        };
+        let like_of = match get_status(like_of_object).await {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warn!("Error fetching like of status: {:?}", e);
+                None
+            }
+        };
+
+        let new_like = models::NewLike {
+            id: uuid::Uuid::new_v4(),
+            account: account.id,
+            status: like_of.as_ref().map(|s| s.id),
+            status_url: if like_of.is_none() { Some(like_of_id) } else { None },
+            local: false,
+            url: Some(id.to_string()),
+            created_at: activity.common.published.unwrap_or_else(|| Utc::now()).naive_utc(),
+        };
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            diesel::insert_into(crate::schema::likes::dsl::likes)
+                .values(&new_like)
+                .execute(&c).with_expected_err(|| "Unable to insert like")
+        })?;
+    }
+
+    Ok(())
+}
+
 async fn _delete_status_by_id(id: &str, account: models::Account, deleted: DateTime<Utc>) -> TaskResult<()> {
     let config = super::config();
     let db = config.db.clone();
@@ -480,6 +533,43 @@ pub async fn undo_announce(
         None => return Err(TaskError::UnexpectedError(format!("Activity has no ID: {:?}", activity)))
     };
     _delete_status_by_id(id.as_str(), account, activity.common.published.unwrap_or_else(Utc::now)).await
+}
+
+#[celery::task]
+pub async fn undo_like(
+    activity: activity_streams::ActivityCommon, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    let id = match &activity.common.id {
+        Some(id) => id,
+        None => return Err(TaskError::UnexpectedError(format!("Activity has no ID: {:?}", activity)))
+    };
+
+    if let Some(like) = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::likes::dsl::likes.filter(
+            crate::schema::likes::dsl::url.eq(id)
+        ).get_result::<models::Like>(&c).optional().with_expected_err(|| "Unable to fetch status")
+    })? {
+        if like.local {
+            warn!("Like \"{}\" is local, ignoring delete", like.id);
+            return Ok(());
+        }
+
+        if like.account != account.id {
+            warn!("Like \"{}\" is not owned by account \"{}\", ignoring delete", like.id, account.id);
+            return Ok(());
+        }
+
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            diesel::delete(&like)
+                .execute(&c).with_expected_err(|| "Unable to delete like")
+        })?;
+    }
+    Ok(())
 }
 
 #[celery::task]
