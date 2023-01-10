@@ -83,6 +83,7 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::accounts::familiar_followers,
             tafarn::views::accounts::follow_account,
             tafarn::views::accounts::unfollow_account,
+            tafarn::views::accounts::note,
 
             tafarn::views::timelines::timeline_home,
             tafarn::views::timelines::timeline_hashtag,

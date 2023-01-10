@@ -74,14 +74,14 @@ or `given_name` claim, if `preferred_username` is not available.
 - [x] GET /api/v1/accounts/verify_credentials
 - [x] PATCH /api/v1/accounts/update_credentials
 - [x] GET /api/v1/accounts/:id
-- [ ] GET /api/v1/accounts/:id/statuses
+- [x] GET /api/v1/accounts/:id/statuses
 - [x] GET /api/v1/accounts/:id/followers
 - [x] GET /api/v1/accounts/:id/following
 - [ ] GET /api/v1/accounts/:id/featured_tags
 - [x] POST /api/v1/accounts/:id/follow
 - [x] POST /api/v1/accounts/:id/unfollow
 - [ ] POST /api/v1/accounts/:id/remove_from_followers
-- [ ] POST /api/v1/accounts/:id/note
+- [x] POST /api/v1/accounts/:id/note
 - [x] GET /api/v1/accounts/relationships
 - [x] GET /api/v1/accounts/familiar_followers
 - [ ] GET /api/v1/accounts/search

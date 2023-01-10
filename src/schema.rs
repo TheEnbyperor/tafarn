@@ -286,6 +286,14 @@ table! {
     }
 }
 
+table! {
+    account_notes (account, owner) {
+        account -> Uuid,
+        owner -> Uuid,
+        note -> Varchar,
+    }
+}
+
 joinable!(app_scopes -> apps (app_id));
 joinable!(oauth_consent_scopes -> oauth_consents (consent_id));
 joinable!(oauth_code_scopes -> oauth_codes (code_id));
@@ -325,4 +333,5 @@ allow_tables_to_appear_in_same_query!(
     likes,
     bookmarks,
     pins,
+    account_notes
 );

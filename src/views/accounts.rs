@@ -604,14 +604,16 @@ pub async fn lists(
     Ok(rocket::serde::json::Json(vec![]))
 }
 
-async fn render_relationship(
-    db: &crate::DbConn, account: &crate::models::Account, id: uuid::Uuid
+async fn render_relationship<'a>(
+    db: &'a crate::DbConn, own_account: &'a crate::models::Account,
+    other_account: std::borrow::Cow<'a, crate::models::Account>,
 ) -> Result<super::objs::Relationship, rocket::http::Status> {
-    let account_id = account.id.clone();
+    let own_account_id = own_account.id;
+    let other_account_id = other_account.id;
     let following = crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
-            crate::schema::following::dsl::follower.eq(&account_id).and(
-                crate::schema::following::dsl::followee.eq(id)
+            crate::schema::following::dsl::follower.eq(own_account_id).and(
+                crate::schema::following::dsl::followee.eq(other_account_id)
             ).and(
                 crate::schema::following::dsl::pending.eq(false)
             )
@@ -619,8 +621,8 @@ async fn render_relationship(
     }).await?;
     let following_pending = crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
-            crate::schema::following::dsl::follower.eq(&account_id).and(
-                crate::schema::following::dsl::followee.eq(id)
+            crate::schema::following::dsl::follower.eq(own_account_id).and(
+                crate::schema::following::dsl::followee.eq(other_account_id)
             ).and(
                 crate::schema::following::dsl::pending.eq(true)
             )
@@ -628,16 +630,23 @@ async fn render_relationship(
     }).await?;
     let followed_by = crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
-            crate::schema::following::dsl::followee.eq(&account_id).and(
-                crate::schema::following::dsl::follower.eq(id)
+            crate::schema::following::dsl::followee.eq(own_account_id).and(
+                crate::schema::following::dsl::follower.eq(other_account_id)
             ).and(
                 crate::schema::following::dsl::pending.eq(false)
             )
         ).count().get_result::<i64>(c)
     }).await?;
+    let note: Option<crate::models::AccountNote> = crate::db_run(db, move |c| -> QueryResult<_> {
+        crate::schema::account_notes::dsl::account_notes.filter(
+            crate::schema::account_notes::dsl::account.eq(other_account_id)
+        ).filter(
+            crate::schema::account_notes::dsl::owner.eq(own_account_id)
+        ).get_result(c).optional()
+    }).await?;
 
     Ok(super::objs::Relationship {
-        id: id.to_string(),
+        id: other_account.iid.to_string(),
         following: following > 0,
         followed_by: followed_by > 0,
         blocking: false,
@@ -650,7 +659,7 @@ async fn render_relationship(
         notifying: false,
         endorsed: false,
         languages: vec![],
-        note: None
+        note: note.map(|n| n.note),
     })
 }
 
@@ -681,7 +690,7 @@ pub async fn relationships(
     let account = get_account(&db, &user).await?;
 
     let relationships = futures::stream::iter(accounts.into_iter())
-        .map(|acct| render_relationship(&db, &account, acct.id))
+        .map(|acct| render_relationship(&db, &account, std::borrow::Cow::Owned(acct)))
         .buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     Ok(rocket::serde::json::Json(relationships))
@@ -743,11 +752,18 @@ pub async fn familiar_followers(
     Ok(rocket::serde::json::Json(familiar_followers))
 }
 
-#[post("/api/v1/accounts/<account_id>/follow?<notify>&<reblogs>&<languages>")]
+#[derive(FromForm)]
+pub struct FollowAccountForm<'a> {
+    reblogs: Option<&'a str>,
+    notify: Option<&'a str>,
+    language: Option<Vec<&'a str>>
+}
+
+#[post("/api/v1/accounts/<account_id>/follow", data = "<_form>")]
 pub async fn follow_account(
     db: crate::DbConn, user: super::oauth::TokenClaims, account_id: String,
-    notify: Option<&str>, reblogs: Option<&str>, languages: Option<Vec<String>>,
-    celery: &rocket::State<crate::CeleryApp>
+    celery: &rocket::State<crate::CeleryApp>,
+    _form: Option<rocket::form::Form<FollowAccountForm<'_>>>
 ) -> Result<rocket::serde::json::Json<super::objs::Relationship>, rocket::http::Status> {
     if !user.has_scope("write:follows") {
         return Err(rocket::http::Status::Forbidden);
@@ -763,10 +779,12 @@ pub async fn follow_account(
             )
         ).count().get_result::<i64>(c)
     }).await? > 0 {
-        return render_relationship(&db, &account, followed_account.id).await.map(rocket::serde::json::Json);
+        return render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account))
+            .await.map(rocket::serde::json::Json);
     }
 
-    let mut relationship = render_relationship(&db, &account, followed_account.id).await?;
+    let mut relationship =
+        render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account)).await?;
     relationship.following = !followed_account.locked;
     relationship.requested = followed_account.locked;
 
@@ -808,29 +826,22 @@ pub async fn unfollow_account(
     }
 
     let account = get_account(&db, &user).await?;
-    let account_id = match uuid::Uuid::parse_str(&account_id) {
-        Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
-    };
-    let followed_account: crate::models::Account = match crate::db_run(&db, move |c| -> QueryResult<_> {
-        crate::schema::accounts::dsl::accounts.find(&account_id).get_result(c).optional()
-    }).await? {
-        Some(a) => a,
-        None => return Err(rocket::http::Status::NotFound)
-    };
+    let followed_account = get_account_from_db(&account_id, &db).await?;
 
     let following = match crate::db_run(&db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::follower.eq(&account.id).and(
-                crate::schema::following::dsl::followee.eq(account_id)
+                crate::schema::following::dsl::followee.eq(followed_account.id)
             )
         ).get_result::<crate::models::Following>(c).optional()
     }).await? {
         Some(f) => f,
-        None => return render_relationship(&db, &account, account_id).await.map(rocket::serde::json::Json)
+        None => return render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account))
+            .await.map(rocket::serde::json::Json)
     };
 
-    let mut relationship = render_relationship(&db, &account, account_id).await?;
+    let mut relationship =
+        render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account)).await?;
     relationship.following = false;
     relationship.requested = false;
 
@@ -843,6 +854,72 @@ pub async fn unfollow_account(
             return Err(rocket::http::Status::InternalServerError);
         }
     };
+
+    Ok(rocket::serde::json::Json(relationship))
+}
+
+#[derive(FromForm)]
+pub struct NoteForm<'a> {
+    comment: Option<&'a str>,
+}
+
+#[post("/api/v1/accounts/<account_id>/note", data = "<form>")]
+pub async fn note(
+    db: crate::DbConn, user: super::oauth::TokenClaims, account_id: String,
+    form: Option<rocket::form::Form<NoteForm<'_>>>
+) -> Result<rocket::serde::json::Json<super::objs::Relationship>, rocket::http::Status> {
+    if !user.has_scope("write:accounts") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let note = match form {
+        Some(f) => match f.comment {
+            Some(n) => {
+                let n = n.trim();
+                if n.is_empty() {
+                    None
+                } else {
+                    Some(n.to_string())
+                }
+            },
+            None => None
+        }
+        None => None,
+    };
+
+    let account = get_account(&db, &user).await?;
+    let note_account = get_account_from_db(&account_id, &db).await?;
+
+    match note {
+        Some(note) => {
+            crate::db_run(&db, move |c| -> QueryResult<_> {
+                diesel::insert_into(crate::schema::account_notes::dsl::account_notes).values(
+                    crate::models::AccountNote {
+                        account: note_account.id,
+                        owner: account.id,
+                        note: note.clone(),
+                    }
+                ).on_conflict(
+                    (crate::schema::account_notes::dsl::account, crate::schema::account_notes::dsl::owner)
+                ).do_update().set(
+                    crate::schema::account_notes::dsl::note.eq(note)
+                ).execute(c)
+            }).await?;
+        },
+        None => {
+            crate::db_run(&db, move |c| -> QueryResult<_> {
+                diesel::delete(
+                    crate::schema::account_notes::dsl::account_notes.filter(
+                        crate::schema::account_notes::dsl::account.eq(note_account.id)
+                    ).filter(
+                        crate::schema::account_notes::dsl::owner.eq(account.id)
+                    )
+                ).execute(c)
+            }).await?;
+        }
+    }
+
+    let relationship = render_relationship(&db, &account, std::borrow::Cow::Borrowed(&note_account)).await?;
 
     Ok(rocket::serde::json::Json(relationship))
 }

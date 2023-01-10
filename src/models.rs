@@ -455,3 +455,11 @@ pub struct NewPin {
     pub status: uuid::Uuid,
     pub account: uuid::Uuid,
 }
+
+#[derive(Insertable, Queryable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="account_notes"]
+pub struct AccountNote {
+    pub account: uuid::Uuid,
+    pub owner: uuid::Uuid,
+    pub note: String,
+}
