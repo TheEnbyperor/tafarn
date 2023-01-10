@@ -19,6 +19,8 @@ pub mod mutes;
 pub mod blocks;
 pub mod media;
 pub mod statuses;
+pub mod bookmarks;
+pub mod favourites;
 pub mod objs;
 pub mod activity_streams;
 

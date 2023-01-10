@@ -5,7 +5,6 @@ use chrono::{TimeZone, Utc};
 use diesel::prelude::*;
 use itertools::Itertools;
 use futures::stream::StreamExt;
-use crate::tasks::statuses::{as_render_like, make_like_audiences};
 use super::{resolve_url, resolve_object, fetch_object};
 
 async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams::ImageOrLink>) -> Option<(String, String, String)> {

@@ -148,12 +148,16 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::statuses::status_liked_by,
             tafarn::views::statuses::boost_status,
             tafarn::views::statuses::unboost_status,
-            tafarn::views::statuses::like_status,
-            tafarn::views::statuses::unlike_status,
-            tafarn::views::statuses::bookmark_status,
-            tafarn::views::statuses::unbookmark_status,
             tafarn::views::statuses::pin_status,
             tafarn::views::statuses::unpin_status,
+
+            tafarn::views::bookmarks::bookmarks,
+            tafarn::views::bookmarks::bookmark_status,
+            tafarn::views::bookmarks::unbookmark_status,
+
+            tafarn::views::favourites::favourites,
+            tafarn::views::favourites::like_status,
+            tafarn::views::favourites::unlike_status,
 
             tafarn::views::web_push::create_subscription,
             tafarn::views::web_push::get_subscription,

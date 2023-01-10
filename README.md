@@ -90,12 +90,14 @@ or `given_name` claim, if `preferred_username` is not available.
 - [ ] GET /api/v1/accounts/:id/identity_proofs
 
 ### bookmarks
-- [ ] GET /api/v1/bookmarks
+- [x] GET /api/v1/bookmarks
 - [x] POST /api/v1/statuses/:id/bookmark
 - [x] POST /api/v1/statuses/:id/unbookmark
 
 ### favourites
-- [ ] GET /api/v1/favourites
+- [x] GET /api/v1/favourites
+- [x] POST /api/v1/statuses/:id/favourite
+- [x] POST /api/v1/statuses/:id/unfavourite
 
 ### mutes
 - [ ] GET /api/v1/mutes
@@ -143,8 +145,8 @@ or `given_name` claim, if `preferred_username` is not available.
 
 ### endorsements
 - [ ] GET /api/v1/endorsements
-- [x] POST /api/v1/accounts/:id/pin
-- [x] POST /api/v1/accounts/:id/unpin
+- [ ] POST /api/v1/accounts/:id/pin
+- [ ] POST /api/v1/accounts/:id/unpin
 
 ### featured tags
 - [ ] GET /api/v1/featured_tags
@@ -175,8 +177,6 @@ or `given_name` claim, if `preferred_username` is not available.
 - [x] GET /api/v1/statuses/:id/context
 - [x] GET /api/v1/statuses/:id/reblogged_by
 - [x] GET /api/v1/statuses/:id/favourited_by
-- [x] POST /api/v1/statuses/:id/favourite
-- [x] POST /api/v1/statuses/:id/unfavourite 
 - [x] POST /api/v1/statuses/:id/reblog
 - [x] POST /api/v1/statuses/:id/unreblog
 - [ ] POST /api/v1/statuses/:id/mute
