@@ -119,6 +119,7 @@ pub async fn setup() -> App {
             tasks::accounts::update_account_from_object,
             tasks::accounts::update_accounts,
             tasks::accounts::update_account_relations,
+            tasks::accounts::deliver_account_update,
 
             tasks::inbox::process_activity,
             tasks::delivery::deliver_object,

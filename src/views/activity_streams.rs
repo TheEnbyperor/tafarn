@@ -925,63 +925,12 @@ pub async fn user(
 ) -> Result<Object, rocket::http::Status> {
     let account = get_account(&db, id).await?;
 
-    let pkey = account.private_key.as_ref().map(|k| match openssl::pkey::PKey::private_key_from_pem(k.as_bytes()) {
-        Ok(pkey) => Ok(pkey),
-        Err(_) => Err(rocket::http::Status::InternalServerError),
-    }).transpose()?;
+    let account = match crate::tasks::accounts::render_account(&account) {
+        Ok(a) => a,
+        Err(_) => return Err(rocket::http::Status::InternalServerError),
+    };
 
-    Ok(Object::Person(Actor {
-        preferred_username: Some(account.username.clone()),
-        inbox: format!("https://{}/as/users/{}/inbox", config.uri, account.id),
-        outbox: format!("https://{}/as/users/{}/outbox", config.uri, account.id),
-        following: None,
-        followers: None,
-        liked: None,
-        manually_approves_followers: Some(account.locked),
-        endpoints: Some(ReferenceOrObject::Object(Box::new(Endpoints {
-            shared_inbox: Some(format!("https://{}/as/inbox", config.uri)),
-            ..Default::default()
-        }))),
-        public_key: match pkey {
-            None => Pluralisable::None,
-            Some(pkey) => Pluralisable::Object(ReferenceOrObject::Object(Box::new(PublicKey {
-                id: Some(account.key_id(&config.uri)),
-                owner: Some(ReferenceOrObject::Reference(format!("https://{}/as/users/{}", config.uri, account.id))),
-                public_key_pem: Some(String::from_utf8(pkey.public_key_to_pem().unwrap()).unwrap()),
-            })))
-        },
-        common: ObjectCommon {
-            id: Some(format!("https://{}/as/users/{}", config.uri, account.id)),
-            name: Some(account.username.clone()),
-            published: Some(Utc.from_local_datetime(&account.created_at).unwrap()),
-            url: Some(URLOrLink::URL(format!("https://{}/users/{}", config.uri, account.id))),
-            icon: Some(ReferenceOrObject::Object(Box::new(ImageOrLink::Image(match (account.avatar_file, account.avatar_content_type) {
-                (Some(file), Some(content_type)) => ObjectCommon {
-                    media_type: Some(content_type),
-                    url: Some(URLOrLink::URL(format!("https://{}/media/{}", config.uri, file))),
-                    ..Default::default()
-                },
-                _ => ObjectCommon {
-                    media_type: Some("image/png".to_string()),
-                    url: Some(URLOrLink::URL(format!("https://{}/static/missing.png", config.uri))),
-                    ..Default::default()
-                },
-            })))),
-            image: Some(ReferenceOrObject::Object(Box::new(ImageOrLink::Image(match (account.header_file, account.header_content_type) {
-                (Some(file), Some(content_type)) => ObjectCommon {
-                    media_type: Some(content_type),
-                    url: Some(URLOrLink::URL(format!("https://{}/media/{}", config.uri, file))),
-                    ..Default::default()
-                },
-                _ => ObjectCommon {
-                    media_type: Some("image/png".to_string()),
-                    url: Some(URLOrLink::URL(format!("https://{}/static/header.png", config.uri))),
-                    ..Default::default()
-                },
-            })))),
-            ..Default::default()
-        },
-    }))
+    Ok(account)
 }
 
 #[get("/as/users/<_id>/inbox")]

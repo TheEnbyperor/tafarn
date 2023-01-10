@@ -49,10 +49,12 @@ pub async fn deliver_dedupe_inboxes(
     let config = super::config();
     let mut inboxes = vec![];
     for a in audience {
-        if let Some(inbox) = a.shared_inbox_url {
-            inboxes.push(inbox);
-        } else if let Some(inbox) = a.inbox_url {
-            inboxes.push(inbox);
+        if !a.local {
+            if let Some(inbox) = a.shared_inbox_url {
+                inboxes.push(inbox);
+            } else if let Some(inbox) = a.inbox_url {
+                inboxes.push(inbox);
+            }
         }
     }
 

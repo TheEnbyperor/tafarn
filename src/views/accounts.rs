@@ -247,7 +247,7 @@ pub struct AccountUpdateFieldForm {
 #[patch("/api/v1/accounts/update_credentials", data = "<form>")]
 pub async fn update_credentials(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    form: rocket::form::Form<AccountUpdateForm<'_>>,
+    form: rocket::form::Form<AccountUpdateForm<'_>>, celery: &rocket::State<crate::CeleryApp>
 ) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
     if !user.has_scope("write:accounts") {
         return Err(rocket::http::Status::Forbidden);
@@ -377,6 +377,16 @@ pub async fn update_credentials(
             diesel::update(accounts::dsl::accounts.find(account.id)).set(&upd).get_result(c)
         })
     }).await?;
+
+    match celery.send_task(
+        crate::tasks::accounts::deliver_account_update::new(account.clone())
+    ).await {
+        Ok(_) => {}
+        Err(err) => {
+            error!("Failed to submit celery task: {:?}", err);
+            return Err(rocket::http::Status::InternalServerError);
+        }
+    };
 
     Ok(rocket::serde::json::Json(render_account(config, &db, account).await?))
 }

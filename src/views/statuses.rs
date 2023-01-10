@@ -720,7 +720,6 @@ pub async fn bookmark_status(
             .execute(c)
     }).await?;
 
-
     Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
 }
 
@@ -779,7 +778,6 @@ pub async fn pin_status(
             .values(new_pin)
             .execute(c)
     }).await?;
-
 
     Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
 }

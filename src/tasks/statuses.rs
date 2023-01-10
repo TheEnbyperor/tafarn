@@ -796,6 +796,8 @@ pub async fn make_like_audiences(like: &models::Like, liked_status: &models::Sta
                     crate::schema::accounts::dsl::id.eq_any(
                         crate::schema::following::dsl::following.filter(
                             crate::schema::following::dsl::followee.eq(like.account)
+                        ).filter(
+                            crate::schema::following::dsl::pending.eq(false)
                         ).select(crate::schema::following::dsl::follower)
                     )
                 ).get_results::<models::Account>(&c).with_expected_err(|| "Unable to get followers")?;

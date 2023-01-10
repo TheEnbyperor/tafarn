@@ -1,10 +1,11 @@
 use crate::models;
-use crate::views::activity_streams;
+use crate::views::activity_streams::{self, ObjectID};
 use celery::prelude::*;
+use chrono::{TimeZone, Utc};
 use diesel::prelude::*;
 use itertools::Itertools;
 use futures::stream::StreamExt;
-use crate::views::activity_streams::ObjectID;
+use crate::tasks::statuses::{as_render_like, make_like_audiences};
 use super::{resolve_url, resolve_object, fetch_object};
 
 async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams::ImageOrLink>) -> Option<(String, String, String)> {
@@ -723,4 +724,124 @@ pub async fn find_account(
             _update_account(*o, false, follow_graph).await
         }
     }
+}
+
+pub fn render_account(account: &models::Account) -> TaskResult<activity_streams::Object> {
+    let config = super::config();
+
+    let pkey = account.private_key.as_ref()
+        .map(|k| openssl::pkey::PKey::private_key_from_pem(k.as_bytes()))
+        .transpose().with_unexpected_err(|| "Unable to parse account private key")?;
+
+    let actor = activity_streams::Actor {
+        preferred_username: Some(account.username.clone()),
+        inbox: format!("https://{}/as/users/{}/inbox", config.uri, account.id),
+        outbox: format!("https://{}/as/users/{}/outbox", config.uri, account.id),
+        following: None,
+        followers: None,
+        liked: None,
+        manually_approves_followers: Some(account.locked),
+        endpoints: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::Endpoints {
+            shared_inbox: Some(format!("https://{}/as/inbox", config.uri)),
+            ..Default::default()
+        }))),
+        public_key: match pkey {
+            None => activity_streams::Pluralisable::None,
+            Some(pkey) => activity_streams::Pluralisable::Object(
+                activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::PublicKey {
+                    id: Some(account.key_id(&config.uri)),
+                    owner: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+                    public_key_pem: Some(String::from_utf8(pkey.public_key_to_pem().unwrap()).unwrap()),
+                }))
+            )
+        },
+        common: activity_streams::ObjectCommon {
+            id: Some(account.actor_id(&config.uri)),
+            name: Some(account.username.clone()),
+            published: Some(Utc.from_local_datetime(&account.created_at).unwrap()),
+            url: Some(activity_streams::URLOrLink::URL(format!("https://{}/users/{}", config.uri, account.id))),
+            icon: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ImageOrLink::Image(
+                match (&account.avatar_file, &account.avatar_content_type) {
+                    (Some(file), Some(content_type)) => activity_streams::ObjectCommon {
+                        media_type: Some(content_type.clone()),
+                        url: Some(activity_streams::URLOrLink::URL(format!("https://{}/media/{}", config.uri, file))),
+                        ..Default::default()
+                    },
+                    _ => activity_streams::ObjectCommon {
+                        media_type: Some("image/png".to_string()),
+                        url: Some(activity_streams::URLOrLink::URL(format!("https://{}/static/missing.png", config.uri))),
+                        ..Default::default()
+                    },
+                }
+            )))),
+            image: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ImageOrLink::Image(
+                match (&account.header_file, &account.header_content_type) {
+                    (Some(file), Some(content_type)) => activity_streams::ObjectCommon {
+                        media_type: Some(content_type.clone()),
+                        url: Some(activity_streams::URLOrLink::URL(format!("https://{}/media/{}", config.uri, file))),
+                        ..Default::default()
+                    },
+                    _ => activity_streams::ObjectCommon {
+                        media_type: Some("image/png".to_string()),
+                        url: Some(activity_streams::URLOrLink::URL(format!("https://{}/static/header.png", config.uri))),
+                        ..Default::default()
+                    },
+                }
+            )))),
+            ..Default::default()
+        },
+    };
+
+    if account.bot {
+        return Ok(activity_streams::Object::Application(actor));
+    }
+    if account.group {
+        return Ok(activity_streams::Object::Group(actor));
+    }
+    Ok(activity_streams::Object::Person(actor))
+}
+
+#[celery::task]
+pub async fn deliver_account_update(
+    account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    let followers = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::accounts::dsl::accounts.filter(
+            crate::schema::accounts::dsl::id.eq_any(
+                crate::schema::following::dsl::following.filter(
+                    crate::schema::following::dsl::followee.eq(account.id)
+                ).filter(
+                    crate::schema::following::dsl::pending.eq(false)
+                ).select(crate::schema::following::dsl::follower)
+            )
+        ).get_results::<models::Account>(&c).with_expected_err(|| "Unable to get followers")
+    })?;
+
+    let account_obj = render_account(&account)?;
+
+    let activity = activity_streams::Object::Update(activity_streams::ActivityCommon {
+        common: activity_streams::ObjectCommon {
+            id: Some(format!("https://{}/as/transient/{}", config.uri, uuid::Uuid::new_v4())),
+            to: activity_streams::Pluralisable::Object(
+                activity_streams::ReferenceOrObject::Reference("https://www.w3.org/ns/activitystreams#Public".to_string())
+            ),
+            ..Default::default()
+        },
+        actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        object: Some(activity_streams::ReferenceOrObject::Object(Box::new(
+            activity_streams::ObjectOrLink::Object(account_obj)
+        ))),
+        target: None,
+        result: None,
+        origin: None,
+        instrument: None,
+    });
+
+    super::delivery::deliver_dedupe_inboxes(activity, followers, account).await?;
+
+    Ok(())
 }

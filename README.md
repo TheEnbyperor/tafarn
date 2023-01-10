@@ -51,8 +51,9 @@ or `given_name` claim, if `preferred_username` is not available.
 - Undo like note
 
 ### Events the server can send
+- Update Person/Application/Group
 - Accept follow
-- Follow
+- Follow Person/Service/Organization/Application/Group
 - Undo follow
 - Announce note
 - Undo announce
