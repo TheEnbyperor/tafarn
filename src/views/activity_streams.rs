@@ -7,7 +7,7 @@ enum DigestAlgorithm {
     SHA512,
     SHA256,
     SHA1,
-    MD5
+    MD5,
 }
 
 impl DigestAlgorithm {
@@ -52,7 +52,7 @@ pub enum Pluralisable<T> {
     Object(T),
     List(Vec<T>),
     #[serde(skip_deserializing)]
-    None
+    None,
 }
 
 impl<T> Default for Pluralisable<T> {
@@ -246,11 +246,11 @@ impl<'r> rocket::data::FromData<'r> for Object {
         match req.content_type() {
             None => return rocket::data::Outcome::Forward(data),
             Some(ct) => match (ct.top().as_str(), ct.sub().as_str()) {
-                ("application", "json") => {},
-                ("application", "ld+json") => {},
+                ("application", "json") => {}
+                ("application", "ld+json") => {}
                 ("application", "activity+json") => {
                     needs_context = false;
-                },
+                }
                 _ => return rocket::data::Outcome::Forward(data),
             }
         }
@@ -282,16 +282,16 @@ impl<'r> rocket::data::FromData<'r> for Object {
             let own_digest = match alg {
                 DigestAlgorithm::SHA512 => {
                     openssl::hash::hash(openssl::hash::MessageDigest::sha512(), &data).unwrap().to_vec()
-                },
+                }
                 DigestAlgorithm::SHA256 => {
                     openssl::hash::hash(openssl::hash::MessageDigest::sha256(), &data).unwrap().to_vec()
-                },
+                }
                 DigestAlgorithm::SHA1 => {
                     openssl::hash::hash(openssl::hash::MessageDigest::sha1(), &data).unwrap().to_vec()
                 }
                 DigestAlgorithm::MD5 => {
                     openssl::hash::hash(openssl::hash::MessageDigest::md5(), &data).unwrap().to_vec()
-                },
+                }
             };
 
             if own_digest != digest {
@@ -320,19 +320,19 @@ impl<'r> rocket::data::FromData<'r> for Object {
                                     (rocket::http::Status::UnprocessableEntity, format!("Invalid @context: {}", s))
                                 );
                             }
-                        },
+                        }
                         Some(serde_json::Value::Array(s)) => {
-                            if !s.iter().any( |v| *v == serde_json::Value::String("https://www.w3.org/ns/activitystreams".to_string())) {
+                            if !s.iter().any(|v| *v == serde_json::Value::String("https://www.w3.org/ns/activitystreams".to_string())) {
                                 return rocket::data::Outcome::Failure(
                                     (rocket::http::Status::UnprocessableEntity, format!("Invalid @context: {:?}", s))
                                 );
                             }
-                        },
+                        }
                         _ => return rocket::data::Outcome::Failure(
                             (rocket::http::Status::UnprocessableEntity, format!("Missing @context"))
                         ),
                     }
-                },
+                }
                 _ => return rocket::data::Outcome::Failure(
                     (rocket::http::Status::UnprocessableEntity, format!("Not an object"))
                 ),
@@ -393,7 +393,7 @@ pub enum CollectionOrLink {
 #[serde(untagged)]
 pub enum URLOrLink {
     URL(String),
-    Link(Link)
+    Link(Link),
 }
 
 pub type LanguageMap<T> = std::collections::HashMap<String, T>;
@@ -531,7 +531,7 @@ pub struct Question {
     #[serde(rename = "anyOf", default, skip_serializing_if = "Option::is_none")]
     pub any_of: Option<ReferenceOrObject<ObjectOrLink>>,
     #[serde(rename = "closed", default, skip_serializing_if = "Option::is_none")]
-    pub closed: Option<ReferenceOrObject<QuestionClosed>>
+    pub closed: Option<ReferenceOrObject<QuestionClosed>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -613,8 +613,8 @@ pub struct Actor {
     #[serde(rename = "liked", default, skip_serializing_if = "Option::is_none")]
     pub liked: Option<String>,
     #[serde(
-        rename = "manuallyApprovesFollowers", alias = "as:manuallyApprovesFollowers",
-        default, skip_serializing_if = "Option::is_none"
+    rename = "manuallyApprovesFollowers", alias = "as:manuallyApprovesFollowers",
+    default, skip_serializing_if = "Option::is_none"
     )]
     pub manually_approves_followers: Option<bool>,
     #[serde(rename = "endpoints", default, skip_serializing_if = "Option::is_none")]
@@ -716,12 +716,12 @@ impl Signature {
                 if !pkey.rsa().is_ok() {
                     return false;
                 }
-            },
+            }
             SignatureAlgorithm::DsaSha1 => {
                 if !pkey.dsa().is_ok() {
                     return false;
                 }
-            },
+            }
             SignatureAlgorithm::HmacSha1 |
             SignatureAlgorithm::HmacSha256 |
             SignatureAlgorithm::HmacSha512 => return false,
@@ -868,6 +868,11 @@ impl<'r> rocket::request::FromRequest<'r> for Signature {
     }
 }
 
+#[get("/as/transient/<_id>")]
+pub async fn transient(_id: &str) -> rocket::http::Status {
+    rocket::http::Status::Gone
+}
+
 #[get("/as/system")]
 pub async fn system_actor(
     config: &rocket::State<AppConfig>
@@ -893,7 +898,7 @@ pub async fn system_actor(
             id: Some(format!("https://{}/as/system#key", config.uri)),
             owner: Some(ReferenceOrObject::Reference(format!("https://{}/as/system", config.uri))),
             public_key_pem: Some(String::from_utf8(config.as_key.public_key_to_pem().unwrap()).unwrap()),
-        })))
+        }))),
     }))
 }
 
@@ -916,7 +921,7 @@ async fn get_account(db: &crate::DbConn, id: &str) -> Result<crate::models::Acco
 
 #[get("/as/users/<id>")]
 pub async fn user(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str
+    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str,
 ) -> Result<Object, rocket::http::Status> {
     let account = get_account(&db, id).await?;
 
@@ -987,7 +992,7 @@ pub async fn get_inbox(_id: &str) -> rocket::http::Status {
 #[post("/as/users/<id>/inbox", data = "<data>")]
 pub async fn post_inbox(
     db: crate::DbConn, id: &str, data: Object, signature: Signature,
-    celery: &rocket::State<crate::CeleryApp>
+    celery: &rocket::State<crate::CeleryApp>,
 ) -> Result<(), rocket::http::Status> {
     get_account(&db, id).await?;
 
@@ -1006,7 +1011,7 @@ pub async fn post_inbox(
 
 #[get("/as/users/<id>/outbox")]
 pub async fn get_outbox(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str
+    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str,
 ) -> Result<Object, rocket::http::Status> {
     let account = get_account(&db, id).await?;
 
@@ -1025,7 +1030,7 @@ pub async fn get_outbox(
 
 #[get("/as/users/<id>/outbox/page?<before>")]
 pub async fn get_outbox_page(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str, before: Option<i64>
+    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str, before: Option<i64>,
 ) -> Result<Object, rocket::http::Status> {
     let account = get_account(&db, id).await?;
 
@@ -1047,7 +1052,7 @@ pub async fn get_outbox_page(
         part_of: Some(ReferenceOrObject::Reference(format!("https://{}/as/users/{}/outbox", config.uri, account.id))),
         next: None,
         prev: None,
-        start_index: None
+        start_index: None,
     }))
 }
 
@@ -1063,7 +1068,7 @@ pub async fn get_shared_inbox() -> rocket::http::Status {
 
 #[post("/as/inbox", data = "<data>")]
 pub async fn post_shared_inbox(
-    data: Object, signature: Signature, celery: &rocket::State<crate::CeleryApp>
+    data: Object, signature: Signature, celery: &rocket::State<crate::CeleryApp>,
 ) -> Result<(), rocket::http::Status> {
     match celery.send_task(
         super::super::tasks::inbox::process_activity::new(data, signature)
@@ -1076,4 +1081,91 @@ pub async fn post_shared_inbox(
     };
 
     Ok(())
+}
+
+#[get("/as/status/<id>/activity")]
+pub async fn status_activity(
+    db: crate::DbConn, id: &str,
+) -> Result<Object, rocket::http::Status> {
+    let status_id = match uuid::Uuid::parse_str(id) {
+        Ok(id) => id,
+        Err(_) => return Err(rocket::http::Status::NotFound)
+    };
+
+    let (status, account): (crate::models::Status, crate::models::Account) =
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::statuses::dsl::statuses.find(status_id).inner_join(
+                crate::schema::accounts::table.on(
+                    crate::schema::statuses::dsl::account_id.eq(crate::schema::accounts::dsl::id)
+                )
+            ).get_result(c)
+        }).await?;
+
+    if !status.local || status.boost_of_url.is_some() || status.deleted_at.is_some() {
+        return Err(rocket::http::Status::NotFound);
+    }
+
+    let aud = match crate::tasks::statuses::make_audiences(&status, false).await {
+        Ok(aud) => aud,
+        Err(_) => return Err(rocket::http::Status::InternalServerError)
+    };
+
+    if !aud.is_visible() {
+        return Err(rocket::http::Status::NotFound);
+    }
+
+    if let Some(boost_of_id) = status.boost_of_id {
+        let boosted_status: crate::models::Status = crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::statuses::dsl::statuses.find(boost_of_id).get_result(c)
+        }).await?;
+
+        let activity = crate::tasks::statuses::as_render_boost(&status, &boosted_status, &account, &aud);
+
+        Ok(activity)
+    } else {
+        Err(rocket::http::Status::NotFound)
+    }
+}
+
+#[get("/as/like/<id>")]
+pub async fn like(
+    db: crate::DbConn, id: &str,
+) -> Result<Object, rocket::http::Status> {
+    let like_id = match uuid::Uuid::parse_str(id) {
+        Ok(id) => id,
+        Err(_) => return Err(rocket::http::Status::NotFound)
+    };
+
+    let (like, account, liked_status): (crate::models::Like, crate::models::Account, crate::models::Status) =
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::likes::dsl::likes.find(like_id).inner_join(
+                crate::schema::accounts::table.on(
+                    crate::schema::likes::dsl::account.eq(crate::schema::accounts::dsl::id)
+                )
+            ).inner_join(
+                crate::schema::statuses::table.on(
+                    crate::schema::likes::dsl::status.eq(crate::schema::statuses::dsl::id.nullable())
+                )
+            ).get_result(c)
+        }).await?;
+
+    if !like.local || like.status_url.is_some() {
+        return Err(rocket::http::Status::NotFound);
+    }
+
+    let aud = match crate::tasks::statuses::make_like_audiences(&like, &liked_status, &account, false).await {
+        Ok(aud) => aud,
+        Err(_) => return Err(rocket::http::Status::InternalServerError)
+    };
+
+    if !aud.is_visible() {
+        return Err(rocket::http::Status::NotFound);
+    }
+
+    let activity = match crate::tasks::statuses::as_render_like(&like, &liked_status, &account, &aud).await {
+        Ok(act) => act,
+        Err(_) => return Err(rocket::http::Status::InternalServerError)
+    };
+
+    Ok(activity)
 }

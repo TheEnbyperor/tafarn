@@ -159,6 +159,7 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::web_push::update_subscription,
             tafarn::views::web_push::delete_subscription,
 
+            tafarn::views::activity_streams::transient,
             tafarn::views::activity_streams::user,
             tafarn::views::activity_streams::get_inbox,
             tafarn::views::activity_streams::post_inbox,
@@ -167,6 +168,8 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::activity_streams::get_shared_inbox,
             tafarn::views::activity_streams::post_shared_inbox,
             tafarn::views::activity_streams::system_actor,
+            tafarn::views::activity_streams::status_activity,
+            tafarn::views::activity_streams::like,
         ])
         .launch()
         .await?;

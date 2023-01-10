@@ -2,7 +2,6 @@ use diesel::prelude::*;
 use chrono::prelude::*;
 use futures::StreamExt;
 use crate::models;
-use crate::views::media::Focus;
 
 #[async_recursion::async_recursion]
 pub async fn render_status(
