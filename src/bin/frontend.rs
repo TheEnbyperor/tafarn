@@ -29,9 +29,9 @@ fn all_options() {}
 async fn main() -> Result<(), rocket::Error> {
     pretty_env_logger::init();
 
-    let app = tafarn::setup().await;
-
     info!("Tafarn frontend starting...");
+
+    let app = tafarn::setup().await;
 
     tafarn::tasks::CONFIG.write().unwrap().replace(tafarn::tasks::Config {
         db: std::sync::Arc::new(diesel::PgConnection::pool("db", &app.rocket).unwrap()),
@@ -77,6 +77,7 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::instance::custom_emoji,
 
             tafarn::views::accounts::verify_credentials,
+            tafarn::views::accounts::user_preferences,
             tafarn::views::accounts::update_credentials,
             tafarn::views::accounts::account,
             tafarn::views::accounts::account_statuses,
@@ -146,7 +147,8 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::media::get_media,
             tafarn::views::media::update_media,
 
-            tafarn::views::statuses::create_status,
+            tafarn::views::statuses::create_status_form,
+            tafarn::views::statuses::create_status_json,
             tafarn::views::statuses::get_status,
             tafarn::views::statuses::delete_status,
             tafarn::views::statuses::status_context,

@@ -59,6 +59,20 @@ pub struct Field {
 }
 
 #[derive(Serialize)]
+pub struct Preferences {
+    #[serde(rename = "posting:default:visibility")]
+    pub default_visibility: Option<StatusVisibility>,
+    #[serde(rename = "posting:default:sensitive")]
+    pub default_sensitive: Option<bool>,
+    #[serde(rename = "posting:default:language")]
+    pub default_language: Option<String>,
+    #[serde(rename = "reading:expand:media")]
+    pub expand_media: Option<String>,
+    #[serde(rename = "reading:expand:spoilers")]
+    pub expand_spoilers: Option<bool>,
+}
+
+#[derive(Serialize)]
 pub struct App {
     pub id: uuid::Uuid,
     pub name: String,
@@ -294,7 +308,7 @@ pub struct Status {
     pub pinned: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Debug)]
 pub enum StatusVisibility {
     #[serde(rename = "public")]
     Public,
@@ -304,6 +318,18 @@ pub enum StatusVisibility {
     Private,
     #[serde(rename = "direct")]
     Direct,
+}
+
+impl StatusVisibility {
+    pub fn from_str(val: &str) -> Option<StatusVisibility> {
+        match val {
+            "public" => Some(StatusVisibility::Public),
+            "unlisted" => Some(StatusVisibility::Unlisted),
+            "private" => Some(StatusVisibility::Private),
+            "direct" => Some(StatusVisibility::Direct),
+            _ => None
+        }
+    }
 }
 
 #[derive(Serialize)]

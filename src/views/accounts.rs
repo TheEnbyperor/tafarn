@@ -217,6 +217,25 @@ pub async fn verify_credentials(
     }))
 }
 
+#[get("/api/v1/preferences")]
+pub async fn user_preferences(
+    db: crate::DbConn, user: super::oauth::TokenClaims
+) -> Result<rocket::serde::json::Json<super::objs::Preferences>, rocket::http::Status> {
+    if !user.has_scope("read:accounts") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = get_account(&db, &user).await?;
+
+    Ok(rocket::serde::json::Json(super::objs::Preferences {
+        default_visibility: Some(super::objs::StatusVisibility::Public),
+        default_sensitive: account.default_sensitive,
+        default_language: account.default_language,
+        expand_media: None,
+        expand_spoilers: Some(false)
+    }))
+}
+
 #[derive(FromForm)]
 pub struct AccountUpdateForm<'a> {
     discoverable: Option<bool>,

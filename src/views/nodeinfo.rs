@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use crate::AppConfig;
 
 #[derive(Serialize, Clone)]
 pub struct NodeInfo2_1 {

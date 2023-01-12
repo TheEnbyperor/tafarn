@@ -242,10 +242,108 @@ pub struct StatusForm<'a> {
     visibility: Option<&'a str>,
 }
 
-#[post("/api/v1/statuses", data = "<form>")]
-pub async fn create_status(
+#[derive(Deserialize)]
+pub struct StatusJson<'a> {
+    #[serde(default)]
+    status: Option<&'a str>,
+    #[serde(default)]
+    media_ids: Option<Vec<&'a str>>,
+    #[serde(default)]
+    in_reply_to_id: Option<&'a str>,
+    #[serde(default)]
+    sensitive: Option<bool>,
+    #[serde(default)]
+    spoiler_text: Option<&'a str>,
+    #[serde(default)]
+    language: Option<&'a str>,
+    #[serde(default)]
+    visibility: Option<&'a str>,
+}
+
+#[derive(Debug)]
+pub struct CreateStatus<'a> {
+    status: Option<&'a str>,
+    media_ids: Vec<uuid::Uuid>,
+    in_reply_to_id: Option<i32>,
+    sensitive: Option<bool>,
+    spoiler_text: Option<&'a str>,
+    language: Option<&'a str>,
+    visibility: super::objs::StatusVisibility,
+}
+
+impl<'a> TryFrom<StatusForm<'a>> for CreateStatus<'a> {
+    type Error = rocket::http::Status;
+
+    fn try_from(value: StatusForm<'a>) -> Result<Self, Self::Error> {
+        Ok(CreateStatus {
+            status: value.status,
+            media_ids: value.media_ids.iter().flatten()
+                .map(|x| uuid::Uuid::parse_str(x))
+                .collect::<Result<Vec<_>, _>>().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+            in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i32>())
+                .transpose().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+            sensitive: if value.sensitive.is_some() {
+                Some(super::parse_bool(value.sensitive, false)?)
+            } else {
+                None
+            },
+            spoiler_text: value.spoiler_text,
+            language: value.language,
+            visibility: match value.visibility {
+                Some(v) => match super::objs::StatusVisibility::from_str(v) {
+                    Some(v) => v,
+                    None => return Err(rocket::http::Status::UnprocessableEntity)
+                },
+                None => super::objs::StatusVisibility::Public
+            }
+        })
+    }
+}
+
+impl<'a> TryFrom<StatusJson<'a>> for CreateStatus<'a> {
+    type Error = rocket::http::Status;
+
+    fn try_from(value: StatusJson<'a>) -> Result<Self, Self::Error> {
+        Ok(CreateStatus {
+            status: value.status,
+            media_ids: value.media_ids.iter().flatten()
+                .map(|x| uuid::Uuid::parse_str(x))
+                .collect::<Result<Vec<_>, _>>().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+            in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i32>())
+                .transpose().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+            sensitive: value.sensitive,
+            spoiler_text: value.spoiler_text,
+            language: value.language,
+            visibility: match value.visibility {
+                Some(v) => match super::objs::StatusVisibility::from_str(v) {
+                    Some(v) => v,
+                    None => return Err(rocket::http::Status::UnprocessableEntity)
+                },
+                None => super::objs::StatusVisibility::Public
+            }
+        })
+    }
+}
+
+#[post("/api/v1/statuses", data = "<form>", rank = 1)]
+pub async fn create_status_form(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
     form: rocket::form::Form<StatusForm<'_>>, celery: &rocket::State<crate::CeleryApp>
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    _create_status(db, config, user, form.into_inner().try_into()?, celery).await
+}
+
+#[post("/api/v1/statuses", data = "<form>", rank = 2)]
+pub async fn create_status_json(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    form: rocket::serde::json::Json<StatusJson<'_>>, celery: &rocket::State<crate::CeleryApp>
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    _create_status(db, config, user, form.into_inner().try_into()?, celery).await
+}
+
+pub async fn _create_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    form: CreateStatus<'_>, celery: &rocket::State<crate::CeleryApp>
 ) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
     if !user.has_scope("write:statuses") {
         return Err(rocket::http::Status::Forbidden);
@@ -253,24 +351,9 @@ pub async fn create_status(
 
     let account = super::accounts::get_account(&db, &user).await?;
     let status_text = comrak::markdown_to_html(&form.status.unwrap_or(""), &crate::COMRAK_OPTIONS);
-    let audience = match form.visibility {
-        Some(v) => match serde_json::from_str::<super::objs::StatusVisibility>(v) {
-            Ok(v) => v,
-            Err(_) => return Err(rocket::http::Status::UnprocessableEntity)
-        },
-        None => super::objs::StatusVisibility::Public
-    };
-    let sensitive = super::parse_bool(form.sensitive, false)?;
-    let spoiler_text = form.spoiler_text
-        .map(|x| comrak::markdown_to_html(x, &crate::COMRAK_OPTIONS))
-        .unwrap_or_default();
     let language = form.language.or(account.default_language.as_deref())
         .map(|x| x.to_string());
-    let media_ids = form.media_ids.iter().flatten()
-        .map(|x| uuid::Uuid::parse_str(x))
-        .collect::<Result<Vec<_>, _>>().map_err(|_| rocket::http::Status::UnprocessableEntity)?;
-    let in_reply_to = match form.in_reply_to_id.map(|x| x.parse::<i32>())
-        .transpose().map_err(|_| rocket::http::Status::UnprocessableEntity)? {
+    let in_reply_to = match form.in_reply_to_id {
         Some(id) => match crate::db_run(&db, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses
                 .filter(crate::schema::statuses::dsl::iid.eq(id))
@@ -283,7 +366,7 @@ pub async fn create_status(
     };
 
     let mut media = vec![];
-    for id in media_ids {
+    for id in form.media_ids {
         match crate::db_run(&db, move |c| -> QueryResult<_> {
             crate::schema::media::dsl::media
                 .filter(crate::schema::media::dsl::id.eq(id))
@@ -315,20 +398,20 @@ pub async fn create_status(
         in_reply_to_url: None,
         boost_of_url: None,
         boost_of_id: None,
-        sensitive,
-        spoiler_text,
+        sensitive: form.sensitive.or(account.default_sensitive).unwrap_or(false),
+        spoiler_text: form.spoiler_text.unwrap_or_default().to_string(),
         language,
         local: true,
         account_id: account.id,
         deleted_at: None,
         edited_at: None,
-        public: audience == super::objs::StatusVisibility::Public,
-        visible: audience == super::objs::StatusVisibility::Public ||
-            audience == super::objs::StatusVisibility::Unlisted,
+        public: form.visibility == super::objs::StatusVisibility::Public,
+        visible: form.visibility == super::objs::StatusVisibility::Public ||
+            form.visibility == super::objs::StatusVisibility::Unlisted,
     };
-    if audience == super::objs::StatusVisibility::Public ||
-        audience == super::objs::StatusVisibility::Unlisted ||
-        audience == super::objs::StatusVisibility::Private {
+    if form.visibility == super::objs::StatusVisibility::Public ||
+        form.visibility == super::objs::StatusVisibility::Unlisted ||
+        form.visibility == super::objs::StatusVisibility::Private {
         new_status_audiences.push(models::StatusAudience {
             id: uuid::Uuid::new_v4(),
             status_id: new_status.id,
@@ -349,6 +432,16 @@ pub async fn create_status(
             Ok(s)
         })
     }).await?;
+
+    match celery.send_task(
+        super::super::tasks::statuses::deliver_status::new(s.clone(), account.clone())
+    ).await {
+        Ok(_) => {}
+        Err(err) => {
+            error!("Failed to submit celery task: {:?}", err);
+            return Err(rocket::http::Status::InternalServerError);
+        }
+    };
 
     Ok(rocket::serde::json::Json(render_status(config, &db, s, Some(&account)).await?))
 }
@@ -395,6 +488,16 @@ pub async fn delete_status(
             .set(crate::schema::statuses::dsl::deleted_at.eq(Utc::now().naive_utc()))
             .get_result::<models::Status>(c)
     }).await?;
+
+    match celery.send_task(
+        super::super::tasks::statuses::deliver_status_delete::new(status.clone(), account.clone())
+    ).await {
+        Ok(_) => {}
+        Err(err) => {
+            error!("Failed to submit celery task: {:?}", err);
+            return Err(rocket::http::Status::InternalServerError);
+        }
+    };
 
     Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
 }
@@ -624,9 +727,9 @@ pub async fn boost_status(
     }
 
     let audience = match form.and_then(|f| f.visibility) {
-        Some(v) => match serde_json::from_str::<super::objs::StatusVisibility>(v) {
-            Ok(v) => v,
-            Err(_) => return Err(rocket::http::Status::BadRequest)
+        Some(v) => match super::objs::StatusVisibility::from_str(v) {
+            Some(v) => v,
+            None => return Err(rocket::http::Status::UnprocessableEntity)
         },
         None => super::objs::StatusVisibility::Public
     };

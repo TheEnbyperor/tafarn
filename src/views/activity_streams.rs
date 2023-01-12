@@ -467,6 +467,8 @@ pub struct ObjectCommon {
     pub duration: Option<String>,
     #[serde(rename = "likes", default, skip_serializing_if = "Option::is_none")]
     pub likes: Option<ReferenceOrObject<Collection>>,
+    #[serde(rename = "sensitive", default, skip_serializing_if = "Option::is_none")]
+    pub sensitive: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -618,14 +620,16 @@ pub struct Actor {
     #[serde(rename = "liked", default, skip_serializing_if = "Option::is_none")]
     pub liked: Option<String>,
     #[serde(
-    rename = "manuallyApprovesFollowers", alias = "as:manuallyApprovesFollowers",
-    default, skip_serializing_if = "Option::is_none"
+        rename = "manuallyApprovesFollowers", alias = "as:manuallyApprovesFollowers",
+        default, skip_serializing_if = "Option::is_none"
     )]
     pub manually_approves_followers: Option<bool>,
     #[serde(rename = "endpoints", default, skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<ReferenceOrObject<Endpoints>>,
     #[serde(rename = "publicKey", default, skip_serializing_if = "Pluralisable::is_none")]
     pub public_key: Pluralisable<ReferenceOrObject<PublicKey>>,
+    #[serde(rename = "discoverable", default, skip_serializing_if = "Option::is_none")]
+    pub discoverable: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -904,6 +908,7 @@ pub async fn system_actor(
             owner: Some(ReferenceOrObject::Reference(format!("https://{}/as/system", config.uri))),
             public_key_pem: Some(String::from_utf8(config.as_key.public_key_to_pem().unwrap()).unwrap()),
         }))),
+        discoverable: Some(false)
     }))
 }
 
@@ -1037,6 +1042,44 @@ pub async fn post_shared_inbox(
     Ok(())
 }
 
+#[get("/as/status/<id>")]
+pub async fn status(
+    db: crate::DbConn, id: &str,
+) -> Result<Object, rocket::http::Status> {
+    let status_id = match uuid::Uuid::parse_str(id) {
+        Ok(id) => id,
+        Err(_) => return Err(rocket::http::Status::NotFound)
+    };
+
+    let (status, account): (crate::models::Status, crate::models::Account) =
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::statuses::dsl::statuses.find(status_id).inner_join(
+                crate::schema::accounts::table.on(
+                    crate::schema::statuses::dsl::account_id.eq(crate::schema::accounts::dsl::id)
+                )
+            ).get_result(c)
+        }).await?;
+
+    if !status.local {
+        return Err(rocket::http::Status::NotFound);
+    }
+
+    let aud = match crate::tasks::statuses::make_audiences(&status, false).await {
+        Ok(aud) => aud,
+        Err(_) => return Err(rocket::http::Status::InternalServerError)
+    };
+
+    if !aud.is_visible() {
+        return Err(rocket::http::Status::NotFound);
+    }
+
+    if status.boost_of_id.is_none() {
+        Ok(crate::tasks::statuses::as_render_status(&status, &account, &aud))
+    } else {
+        Err(rocket::http::Status::NotFound)
+    }
+}
+
 #[get("/as/status/<id>/activity")]
 pub async fn status_activity(
     db: crate::DbConn, id: &str,
@@ -1055,7 +1098,7 @@ pub async fn status_activity(
             ).get_result(c)
         }).await?;
 
-    if !status.local || status.boost_of_url.is_some() || status.deleted_at.is_some() {
+    if !status.local {
         return Err(rocket::http::Status::NotFound);
     }
 
@@ -1069,6 +1112,10 @@ pub async fn status_activity(
     }
 
     if let Some(boost_of_id) = status.boost_of_id {
+        if status.deleted_at.is_some() {
+            return Err(rocket::http::Status::Gone);
+        }
+
         let boosted_status: crate::models::Status = crate::db_run(&db, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(boost_of_id).get_result(c)
         }).await?;
@@ -1077,7 +1124,7 @@ pub async fn status_activity(
 
         Ok(activity)
     } else {
-        Err(rocket::http::Status::NotFound)
+        Ok(crate::tasks::statuses::as_render_status_activity(&status, &account, &aud))
     }
 }
 

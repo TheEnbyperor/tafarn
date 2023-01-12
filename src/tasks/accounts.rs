@@ -121,6 +121,7 @@ async fn _update_account(
                     existing_account.locked = a.manually_approves_followers.unwrap_or(existing_account.locked);
                     existing_account.shared_inbox_url = shared_inbox;
                     existing_account.follower_collection_url = a.followers.clone();
+                    existing_account.discoverable = a.discoverable.or(existing_account.discoverable);
 
                     if let Some((file, url, format)) = avatar {
                         existing_account.avatar_file = Some(file);
@@ -156,7 +157,7 @@ async fn _update_account(
                         updated_at: Utc::now().naive_utc(),
                         default_sensitive: None,
                         default_language: None,
-                        discoverable: None,
+                        discoverable: a.discoverable,
                         follower_count: 0,
                         following_count: 0,
                         statuses_count: 0,
@@ -765,6 +766,7 @@ pub fn render_account(account: &models::Account) -> TaskResult<activity_streams:
                 }))
             )
         },
+        discoverable: account.discoverable,
         common: activity_streams::ObjectCommon {
             id: Some(account.actor_id(&config.uri)),
             name: Some(account.username.clone()),

@@ -57,35 +57,69 @@ lazy_static! {
     };
 
     pub static ref HTML_RULES: sanitize_html::rules::Rules = {
+        let class_re = regex::Regex::new("^((((h|p|u|dt|e)-[^ ]+)|mention|hashtag|ellipsis|invisible) ?)*$").unwrap();
+
         sanitize_html::rules::Rules::new()
             .allow_comments(true)
-            .element(sanitize_html::rules::Element::new("abbr"))
-            .element(sanitize_html::rules::Element::new("acronym"))
-            .element(sanitize_html::rules::Element::new("a"))
-            .element(sanitize_html::rules::Element::new("b"))
-            .element(sanitize_html::rules::Element::new("blockquote"))
-            .element(sanitize_html::rules::Element::new("br"))
-            .element(sanitize_html::rules::Element::new("code"))
-            .element(sanitize_html::rules::Element::new("dd"))
-            .element(sanitize_html::rules::Element::new("del"))
-            .element(sanitize_html::rules::Element::new("div"))
-            .element(sanitize_html::rules::Element::new("dl"))
-            .element(sanitize_html::rules::Element::new("dt"))
-            .element(sanitize_html::rules::Element::new("em"))
-            .element(sanitize_html::rules::Element::new("i"))
-            .element(sanitize_html::rules::Element::new("li"))
-            .element(sanitize_html::rules::Element::new("ol"))
-            .element(sanitize_html::rules::Element::new("p"))
-            .element(sanitize_html::rules::Element::new("section"))
-            .element(sanitize_html::rules::Element::new("span"))
-            .element(sanitize_html::rules::Element::new("sub"))
-            .element(sanitize_html::rules::Element::new("sup"))
-            .element(sanitize_html::rules::Element::new("strong"))
-            .element(sanitize_html::rules::Element::new("table"))
-            .element(sanitize_html::rules::Element::new("td"))
-            .element(sanitize_html::rules::Element::new("tr"))
-            .element(sanitize_html::rules::Element::new("th"))
-            .element(sanitize_html::rules::Element::new("ul"))
+            .element(sanitize_html::rules::Element::new("abbr")
+                .attribute("title", sanitize_html::rules::pattern::Pattern::any())
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("acronym")
+                .attribute("title", sanitize_html::rules::pattern::Pattern::any())
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("a")
+                .attribute("href", sanitize_html::rules::pattern::Pattern::any())
+                .attribute("rel", sanitize_html::rules::pattern::Pattern::any())
+                .attribute("target", sanitize_html::rules::pattern::Pattern::any())
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("b")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("blockquote")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("br")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("code")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("dd")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("del")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("div")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("dl")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("dt")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("em")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("i")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("li")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("ol")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("p")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("section")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("span")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("sub")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("sup")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("strong")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("table")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("td")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("tr")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("th")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
+            .element(sanitize_html::rules::Element::new("ul")
+                .attribute("class", sanitize_html::rules::pattern::Pattern::regex(class_re.clone())))
     };
 
     pub static ref COMRAK_OPTIONS: comrak::ComrakOptions = comrak::ComrakOptions {
@@ -198,6 +232,8 @@ pub async fn setup() -> App {
             tasks::statuses::undo_announce,
             tasks::statuses::undo_like,
             tasks::statuses::insert_into_timelines,
+            tasks::statuses::deliver_status,
+            tasks::statuses::deliver_status_delete,
             tasks::statuses::deliver_boost,
             tasks::statuses::deliver_undo_boost,
             tasks::statuses::deliver_like,
@@ -214,11 +250,15 @@ pub async fn setup() -> App {
         heartbeat = Some(60),
     ).await.expect("Unable to setup Celery app");
 
+    info!("Configuring OIDC");
+
     let oidc_app = views::oidc::OIDCApplication::new(
         &config.oidc.issuer_url,
         &config.oidc.client_id,
         &config.oidc.client_secret,
     ).await.expect("Unable to setup OIDC app");
+
+    info!("Applying database migrations");
 
     let db_pool = diesel::PgConnection::pool("db", &rocket).unwrap();
     embedded_migrations::run_with_output(&db_pool.get().unwrap(), &mut std::io::stdout()).unwrap();

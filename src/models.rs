@@ -315,6 +315,14 @@ impl Status {
             self.url.clone()
         }
     }
+
+    pub fn activity_url(&self, uri: &str) -> Option<String> {
+        if self.local {
+            Some(format!("https://{}/as/status/{}/activity", uri, self.id))
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Insertable, Clone, Debug)]

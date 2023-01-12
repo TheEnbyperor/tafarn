@@ -7,6 +7,8 @@ use rocket_sync_db_pools::Poolable;
 async fn main() {
     pretty_env_logger::init();
 
+    info!("Tafarn task runner starting...");
+
     let app = tafarn::setup().await;
     let db_pool = diesel::PgConnection::pool("db", &app.rocket).unwrap();
     let celery_app = std::sync::Arc::new(app.celery_app);
@@ -19,8 +21,6 @@ async fn main() {
         web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new()),
         as_key: std::sync::Arc::new(app.as_key),
     });
-
-    info!("Tafarn task runner starting...");
 
     celery_app.consume().await.unwrap();
 }

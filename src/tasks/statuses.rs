@@ -649,6 +649,7 @@ pub async fn insert_into_timelines(
 pub struct ASAudiences {
     pub to: Vec<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>,
     pub cc: Vec<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>,
+    audiences: Vec<models::StatusAudience>,
     delivery_accounts: Vec<models::Account>,
 }
 
@@ -673,13 +674,13 @@ pub async fn make_audiences(status: &models::Status, resolve_delivery: bool) -> 
         cc.push(activity_streams::ReferenceOrObject::Reference("https://www.w3.org/ns/activitystreams#Public".to_string()));
     }
 
-    tokio::task::block_in_place(|| -> TaskResult<_> {
+    let audiences = tokio::task::block_in_place(|| -> TaskResult<_> {
         let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
         let audiences = crate::schema::status_audiences::dsl::status_audiences.filter(
             crate::schema::status_audiences::dsl::status_id.eq(status.id)
         ).get_results::<models::StatusAudience>(&c).with_expected_err(|| "Unable to get boot audiences")?;
 
-        for aud in audiences {
+        for aud in &audiences {
             let reference = if let Some(acct) = aud.account {
                 let a = crate::schema::accounts::dsl::accounts.find(acct)
                     .get_result::<models::Account>(&c)
@@ -719,14 +720,129 @@ pub async fn make_audiences(status: &models::Status, resolve_delivery: bool) -> 
             }
         }
 
-        Ok(())
+        Ok(audiences)
     })?;
 
     Ok(ASAudiences {
         to,
         cc,
+        audiences,
         delivery_accounts,
     })
+}
+
+pub fn as_render_status(
+    status: &models::Status, account: &models::Account, aud: &ASAudiences
+) -> activity_streams::Object {
+    let config = super::config();
+
+    if let Some(deleted_at) = &status.deleted_at {
+        return activity_streams::Object::Tombstone(activity_streams::Tombstone {
+            common: activity_streams::ObjectCommon {
+                id: Some(status.url(&config.uri)),
+                ..Default::default()
+            },
+            former_type: Some("Note".to_string()),
+            deleted: Some(Utc.from_utc_datetime(deleted_at))
+        })
+    }
+
+    activity_streams::Object::Note(activity_streams::ObjectCommon {
+        id: Some(status.url(&config.uri)),
+        published: Some(Utc.from_utc_datetime(&status.created_at)),
+        updated: Some(Utc.from_utc_datetime(&status.updated_at)),
+        to: activity_streams::Pluralisable::List(aud.to.clone()),
+        cc: activity_streams::Pluralisable::List(aud.cc.clone()),
+        attributed_to: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        sensitive: Some(status.sensitive),
+        content: Some(status.text.clone()),
+        content_map: status.language.as_ref().map(|l| activity_streams::LanguageMap::from([
+            (l.clone(), status.text.clone())
+        ])),
+        summary: if status.spoiler_text.is_empty() {
+            None
+        } else {
+            Some(status.spoiler_text.clone())
+        },
+        summary_map: status.language.as_ref().and_then(|l| if status.spoiler_text.is_empty() {
+            None
+        } else {
+            Some(activity_streams::LanguageMap::from([
+                (l.clone(), status.spoiler_text.clone())
+            ]))
+        }),
+        ..Default::default()
+    })
+}
+
+pub fn as_render_status_activity(
+    status: &models::Status, account: &models::Account, aud: &ASAudiences
+) -> activity_streams::Object {
+    let config = super::config();
+
+    activity_streams::Object::Create(activity_streams::ActivityCommon {
+        common: activity_streams::ObjectCommon {
+            id: Some(status.activity_url(&config.uri).unwrap_or_default()),
+            published: Some(Utc.from_utc_datetime(&status.created_at)),
+            to: activity_streams::Pluralisable::List(aud.to.clone()),
+            cc: activity_streams::Pluralisable::List(aud.cc.clone()),
+            ..Default::default()
+        },
+        actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+        object: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
+           as_render_status(status, account, aud)
+        )))),
+        target: None,
+        result: None,
+        origin: None,
+        instrument: None,
+    })
+}
+
+#[celery::task]
+pub async fn deliver_status(
+    status: models::Status, account: models::Account,
+) -> TaskResult<()> {
+    let config = super::config();
+    let aud = make_audiences(&status, true).await?;
+    let activity = as_render_status_activity(&status, &account, &aud);
+    config.celery.send_task(
+        insert_into_timelines::new(status, aud.audiences)
+    ).await.with_expected_err(|| "Unable to submit timelines task")?;
+    super::delivery::deliver_dedupe_inboxes(activity, aud.delivery_accounts, account).await?;
+    Ok(())
+}
+
+#[celery::task]
+pub async fn deliver_status_delete(
+    status: models::Status, account: models::Account,
+) -> TaskResult<()> {
+    if let Some(deleted_at) = &status.deleted_at {
+        let config = super::config();
+        let aud = make_audiences(&status, true).await?;
+
+        let activity = activity_streams::Object::Delete(activity_streams::ActivityCommon {
+            common: activity_streams::ObjectCommon {
+                id: Some(format!("https://{}/as/transient/{}", config.uri, uuid::Uuid::new_v4())),
+                published: Some(Utc.from_utc_datetime(deleted_at)),
+                to: activity_streams::Pluralisable::List(aud.to.clone()),
+                cc: activity_streams::Pluralisable::List(aud.cc.clone()),
+                ..Default::default()
+            },
+            actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
+            object: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
+                as_render_status(&status, &account, &aud)
+            )))),
+            target: None,
+            result: None,
+            origin: None,
+            instrument: None,
+        });
+
+        super::delivery::deliver_dedupe_inboxes(activity, aud.delivery_accounts, account).await?;
+    }
+
+    Ok(())
 }
 
 pub fn as_render_boost(
@@ -755,8 +871,12 @@ pub fn as_render_boost(
 pub async fn deliver_boost(
     status: models::Status, boosted_status: models::Status, account: models::Account,
 ) -> TaskResult<()> {
+    let config = super::config();
     let aud = make_audiences(&status, true).await?;
     let activity = as_render_boost(&status, &boosted_status, &account, &aud);
+    config.celery.send_task(
+        insert_into_timelines::new(status, aud.audiences)
+    ).await.with_expected_err(|| "Unable to submit timelines task")?;
     super::delivery::deliver_dedupe_inboxes(activity, aud.delivery_accounts, account).await?;
     Ok(())
 }
@@ -834,6 +954,7 @@ pub async fn make_like_audiences(like: &models::Like, liked_status: &models::Sta
     Ok(ASAudiences {
         to,
         cc,
+        audiences: vec![],
         delivery_accounts: aud,
     })
 }

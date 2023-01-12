@@ -51,10 +51,11 @@ or `given_name` claim, if `preferred_username` is not available.
 - Undo like note
 
 ### Events the server can send
-- Update Person/Application/Group
-- Accept follow
 - Follow Person/Service/Organization/Application/Group
+- Accept follow
 - Undo follow
+- Update Person/Application/Group
+- Create note
 - Announce note
 - Undo announce
 - Like note
@@ -71,7 +72,7 @@ or `given_name` claim, if `preferred_username` is not available.
 - [ ] POST /api/v1/emails/confirmation
 
 ### accounts
-- [ ] POST /api/v1/accounts
+- [ ] POST /api/v1/accounts (likely never to be implemented)
 - [x] GET /api/v1/accounts/verify_credentials
 - [x] PATCH /api/v1/accounts/update_credentials
 - [x] GET /api/v1/accounts/:id
@@ -87,7 +88,7 @@ or `given_name` claim, if `preferred_username` is not available.
 - [x] GET /api/v1/accounts/familiar_followers
 - [ ] GET /api/v1/accounts/search
 - [ ] GET /api/v1/accounts/lookup
-- [ ] GET /api/v1/accounts/:id/identity_proofs
+- [ ] GET /api/v1/accounts/:id/identity_proofs (likely never to be implemented)
 
 ### bookmarks
 - [x] GET /api/v1/bookmarks
@@ -155,7 +156,7 @@ or `given_name` claim, if `preferred_username` is not available.
 - [ ] GET /api/v1/featured_tags/suggestions
 
 ### preferences
-- [ ] GET /api/v1/preferences
+- [x] GET /api/v1/preferences
 
 ### followed tags
 - [ ] GET /api/v1/followed_tags
