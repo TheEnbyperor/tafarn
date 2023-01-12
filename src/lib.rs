@@ -55,6 +55,63 @@ lazy_static! {
             .https_only(true)
             .build().unwrap()
     };
+
+    pub static ref HTML_RULES: sanitize_html::rules::Rules = {
+        sanitize_html::rules::Rules::new()
+            .allow_comments(true)
+            .element(sanitize_html::rules::Element::new("abbr"))
+            .element(sanitize_html::rules::Element::new("acronym"))
+            .element(sanitize_html::rules::Element::new("a"))
+            .element(sanitize_html::rules::Element::new("b"))
+            .element(sanitize_html::rules::Element::new("blockquote"))
+            .element(sanitize_html::rules::Element::new("br"))
+            .element(sanitize_html::rules::Element::new("code"))
+            .element(sanitize_html::rules::Element::new("dd"))
+            .element(sanitize_html::rules::Element::new("del"))
+            .element(sanitize_html::rules::Element::new("div"))
+            .element(sanitize_html::rules::Element::new("dl"))
+            .element(sanitize_html::rules::Element::new("dt"))
+            .element(sanitize_html::rules::Element::new("em"))
+            .element(sanitize_html::rules::Element::new("i"))
+            .element(sanitize_html::rules::Element::new("li"))
+            .element(sanitize_html::rules::Element::new("ol"))
+            .element(sanitize_html::rules::Element::new("p"))
+            .element(sanitize_html::rules::Element::new("section"))
+            .element(sanitize_html::rules::Element::new("span"))
+            .element(sanitize_html::rules::Element::new("sub"))
+            .element(sanitize_html::rules::Element::new("sup"))
+            .element(sanitize_html::rules::Element::new("strong"))
+            .element(sanitize_html::rules::Element::new("table"))
+            .element(sanitize_html::rules::Element::new("td"))
+            .element(sanitize_html::rules::Element::new("tr"))
+            .element(sanitize_html::rules::Element::new("th"))
+            .element(sanitize_html::rules::Element::new("ul"))
+    };
+
+    pub static ref COMRAK_OPTIONS: comrak::ComrakOptions = comrak::ComrakOptions {
+        extension: comrak::ComrakExtensionOptions {
+            strikethrough: true,
+            tagfilter: true,
+            table: true,
+            autolink: true,
+            tasklist: true,
+            superscript: true,
+            header_ids: None,
+            footnotes: true,
+            description_lists: true,
+            front_matter_delimiter: None,
+        },
+        parse: comrak::ComrakParseOptions {
+            smart: true,
+            default_info_string: None,
+        },
+        render: comrak::ComrakRenderOptions {
+            hardbreaks: true,
+            github_pre_lang: false,
+            escape: true,
+            ..Default::default()
+        }
+    };
 }
 
 pub type CeleryApp = std::sync::Arc<celery::Celery<AMQPBroker>>;

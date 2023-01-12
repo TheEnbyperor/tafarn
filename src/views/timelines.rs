@@ -4,7 +4,7 @@ use futures::StreamExt;
 #[get("/api/v1/timelines/home?<max_id>&<since_id>&<min_id>&<limit>")]
 pub async fn timeline_home(
     config: &rocket::State<crate::AppConfig>, db: crate::DbConn, user: super::oauth::TokenClaims,
-    max_id: Option<i32>, since_id: Option<String>, min_id: Option<i32>,
+    max_id: Option<i32>, since_id: Option<i32>, min_id: Option<i32>,
     limit: Option<u64>, host: &rocket::http::uri::Host<'_>,
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
     if !user.has_scope("read:statuses") {
@@ -32,10 +32,13 @@ pub async fn timeline_home(
                 crate::schema::statuses::dsl::id.eq(crate::schema::home_timeline::dsl::status_id)
             )).into_boxed();
             if let Some(min_id) = min_id {
-                sel = sel.filter(crate::schema::home_timeline::dsl::id.lt(min_id));
+                sel = sel.filter(crate::schema::home_timeline::dsl::id.gt(min_id));
             }
             if let Some(max_id) = max_id {
-                sel = sel.filter(crate::schema::home_timeline::dsl::id.gt(max_id));
+                sel = sel.filter(crate::schema::home_timeline::dsl::id.lt(max_id));
+            }
+            if let Some(since_id) = since_id {
+                sel = sel.filter(crate::schema::home_timeline::dsl::id.gt(since_id));
             }
             sel.get_results(c)
         }).await?;
@@ -70,7 +73,7 @@ pub async fn timeline_home(
 pub async fn timeline_hashtag(
     config: &rocket::State<crate::AppConfig>, hashtag: &str, any: Option<Vec<&str>>, all: Option<Vec<&str>>,
     none: Option<Vec<&str>>, local: Option<&str>, remote: Option<&str>,
-    only_media: Option<&str>, max_id: Option<String>, since_id: Option<String>,
+    only_media: Option<&str>, max_id: Option<String>, since_id: Option<i32>,
     min_id: Option<String>, limit: Option<u64>
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::Status>>, rocket::http::Status> {
     let _local = super::parse_bool(local, false)?;
@@ -84,7 +87,7 @@ pub async fn timeline_hashtag(
 pub async fn timeline_public(
     config: &rocket::State<crate::AppConfig>, db: crate::DbConn, user: Option<super::oauth::TokenClaims>,
     local: Option<&str>, remote: Option<&str>, only_media: Option<&str>,
-    max_id: Option<i32>, since_id: Option<String>, min_id: Option<i32>, limit: Option<u64>,
+    max_id: Option<i32>, since_id: Option<i32>, min_id: Option<i32>, limit: Option<u64>,
     host: &rocket::http::uri::Host<'_>,
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
     let local = super::parse_bool(local, false)?;
@@ -123,6 +126,9 @@ pub async fn timeline_public(
             }
             if let Some(max_id) = max_id {
                 sel = sel.filter(crate::schema::public_timeline::dsl::id.lt(max_id));
+            }
+            if let Some(since_id) = since_id {
+                sel = sel.filter(crate::schema::public_timeline::dsl::id.gt(since_id));
             }
             if local {
                 sel = sel.filter(crate::schema::statuses::dsl::local.eq(true));

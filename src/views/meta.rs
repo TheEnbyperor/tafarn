@@ -49,6 +49,30 @@ pub struct JRDLink {
     pub properties: Option<JRDProperties>
 }
 
+#[get("/.well-known/nodeinfo")]
+pub fn well_known_node_info(
+    config: &rocket::State<AppConfig>
+) -> JRD {
+    JRD {
+        subject: config.uri.to_string(),
+        aliases: vec![],
+        properties: None,
+        links: vec![JRDLink {
+            rel: "http://nodeinfo.diaspora.software/ns/schema/2.1".to_string(),
+            type_: Some("application/json".to_string()),
+            href: Some(format!("https://{}/nodeinfo/2.1", config.uri)),
+            titles: None,
+            properties: None
+        }, JRDLink {
+            rel: "http://nodeinfo.diaspora.software/ns/schema/2.0".to_string(),
+            type_: Some("application/json".to_string()),
+            href: Some(format!("https://{}/nodeinfo/2.0", config.uri)),
+            titles: None,
+            properties: None
+        }]
+    }
+}
+
 #[get("/.well-known/webfinger?<resource>")]
 pub async fn web_finger(
     db: crate::DbConn, config: &rocket::State<AppConfig>, resource: String
@@ -69,6 +93,27 @@ pub async fn web_finger(
 
     if domain != config.uri {
         return Err(rocket::http::Status::NotFound);
+    }
+
+    if username == config.uri {
+        return Ok(JRD {
+            subject: format!("acct:{}@{}", config.uri, config.uri),
+            aliases: vec![],
+            properties: None,
+            links: vec![JRDLink {
+                rel: "hhttp://webfinger.net/rel/profile-page".to_string(),
+                type_: Some("text/html".to_string()),
+                href: Some(config.uri.to_string()),
+                titles: None,
+                properties: None
+            }, JRDLink {
+                rel: "self".to_string(),
+                type_: Some("application/activity+json".to_string()),
+                href: Some(format!("https://{}/as/system", config.uri)),
+                titles: None,
+                properties: None
+            }]
+        })
     }
 
     let account: Option<crate::models::Account> = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {

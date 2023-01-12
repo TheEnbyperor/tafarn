@@ -95,6 +95,12 @@ async fn _update_account(
                 None => None
             };
 
+            let bio = a.common.summary.as_deref()
+                .map(|s| {
+                    sanitize_html::sanitize_str(&crate::HTML_RULES, s)
+                        .with_unexpected_err(|| "Unable to sanitize bio")
+                }).transpose()?;
+
             let new_account = match account {
                 Some(mut existing_account) => {
                     if existing_account.local {
@@ -106,7 +112,7 @@ async fn _update_account(
                     existing_account.group = is_group;
                     existing_account.display_name = a.common.name.clone().unwrap_or(existing_account.display_name);
                     existing_account.username = a.preferred_username.clone().unwrap_or(existing_account.username);
-                    existing_account.bio = a.common.summary.clone().unwrap_or(existing_account.bio);
+                    existing_account.bio = bio.unwrap_or(existing_account.bio);
                     existing_account.inbox_url = Some(a.inbox.clone());
                     existing_account.outbox_url = Some(a.outbox.clone());
                     existing_account.locked = a.manually_approves_followers.unwrap_or_default();
@@ -142,12 +148,12 @@ async fn _update_account(
                         actor: a.common.id.clone(),
                         username: a.preferred_username.clone().unwrap_or_default(),
                         display_name: a.common.name.clone().unwrap_or_default(),
-                        bio: a.common.summary.clone().unwrap_or_default(),
+                        bio: bio.unwrap_or_default(),
                         locked: a.manually_approves_followers.unwrap_or_default(),
                         bot: is_bot,
                         group: is_group,
                         created_at: a.common.published.map(|p| p.naive_utc()).unwrap_or_else(|| chrono::Utc::now().naive_utc()),
-                        updated_at: chrono::Utc::now().naive_utc(),
+                        updated_at: Utc::now().naive_utc(),
                         default_sensitive: None,
                         default_language: None,
                         discoverable: None,
@@ -250,7 +256,12 @@ async fn _update_account(
                 };
                 match attachment {
                     activity_streams::Object::PropertyValue(pv) => {
-                        pvs.push((pv.name.unwrap_or_default(), pv.value.unwrap_or_default()));
+                        let v = pv.value.as_deref()
+                            .map(|s| {
+                                sanitize_html::sanitize_str(&crate::HTML_RULES, s)
+                                    .with_unexpected_err(|| "Unable to sanitize property value")
+                            }).transpose()?;
+                        pvs.push((pv.name.unwrap_or_default(), v.unwrap_or_default()));
                     },
                     o => {
                         warn!("Account attachment is unsupported on {}: {:?}", object.id_or_default(), o);
@@ -579,7 +590,7 @@ pub async fn update_account_relations(
                                 id: uuid::Uuid::new_v4(),
                                 follower: follower_account.id,
                                 followee: account.id,
-                                created_at: chrono::Utc::now().naive_utc(),
+                                created_at: Utc::now().naive_utc(),
                                 pending: false
                             })
                             .on_conflict_do_nothing()
@@ -596,7 +607,7 @@ pub async fn update_account_relations(
                                 id: uuid::Uuid::new_v4(),
                                 follower: account.id,
                                 followee: followed_account.id,
-                                created_at: chrono::Utc::now().naive_utc(),
+                                created_at: Utc::now().naive_utc(),
                                 pending: false
                             })
                             .on_conflict_do_nothing()

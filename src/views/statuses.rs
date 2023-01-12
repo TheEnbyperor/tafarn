@@ -230,6 +230,129 @@ pub async fn get_status_and_check_visibility(
     }
 }
 
+
+#[derive(FromForm)]
+pub struct StatusForm<'a> {
+    status: Option<&'a str>,
+    media_ids: Option<Vec<&'a str>>,
+    in_reply_to_id: Option<&'a str>,
+    sensitive: Option<&'a str>,
+    spoiler_text: Option<&'a str>,
+    language: Option<&'a str>,
+    visibility: Option<&'a str>,
+}
+
+#[post("/api/v1/statuses", data = "<form>")]
+pub async fn create_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    form: rocket::form::Form<StatusForm<'_>>, celery: &rocket::State<crate::CeleryApp>
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:statuses") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status_text = comrak::markdown_to_html(&form.status.unwrap_or(""), &crate::COMRAK_OPTIONS);
+    let audience = match form.visibility {
+        Some(v) => match serde_json::from_str::<super::objs::StatusVisibility>(v) {
+            Ok(v) => v,
+            Err(_) => return Err(rocket::http::Status::UnprocessableEntity)
+        },
+        None => super::objs::StatusVisibility::Public
+    };
+    let sensitive = super::parse_bool(form.sensitive, false)?;
+    let spoiler_text = form.spoiler_text
+        .map(|x| comrak::markdown_to_html(x, &crate::COMRAK_OPTIONS))
+        .unwrap_or_default();
+    let language = form.language.or(account.default_language.as_deref())
+        .map(|x| x.to_string());
+    let media_ids = form.media_ids.iter().flatten()
+        .map(|x| uuid::Uuid::parse_str(x))
+        .collect::<Result<Vec<_>, _>>().map_err(|_| rocket::http::Status::UnprocessableEntity)?;
+    let in_reply_to = match form.in_reply_to_id.map(|x| x.parse::<i32>())
+        .transpose().map_err(|_| rocket::http::Status::UnprocessableEntity)? {
+        Some(id) => match crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::statuses::dsl::statuses
+                .filter(crate::schema::statuses::dsl::iid.eq(id))
+                .get_result::<models::Status>(c).optional()
+        }).await? {
+            Some(s) => Some(s),
+            None => return Err(rocket::http::Status::UnprocessableEntity)
+        },
+        None => None
+    };
+
+    let mut media = vec![];
+    for id in media_ids {
+        match crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::media::dsl::media
+                .filter(crate::schema::media::dsl::id.eq(id))
+                .get_result::<models::Media>(c).optional()
+        }).await? {
+            Some(m) => {
+                if m.owned_by.as_deref() != Some(&user.subject) {
+                    return Err(rocket::http::Status::Forbidden);
+                }
+                media.push(m);
+            },
+            None => return Err(rocket::http::Status::UnprocessableEntity)
+        }
+    }
+
+    if status_text.is_empty() && media.is_empty() {
+        return Err(rocket::http::Status::UnprocessableEntity);
+    }
+
+    let mut new_status_audiences = vec![];
+    let new_status = models::NewStatus {
+        id: uuid::Uuid::new_v4(),
+        url: "".to_string(),
+        uri: None,
+        text: status_text,
+        created_at: Utc::now().naive_utc(),
+        updated_at: Utc::now().naive_utc(),
+        in_reply_to_id: in_reply_to.map(|x| x.id),
+        in_reply_to_url: None,
+        boost_of_url: None,
+        boost_of_id: None,
+        sensitive,
+        spoiler_text,
+        language,
+        local: true,
+        account_id: account.id,
+        deleted_at: None,
+        edited_at: None,
+        public: audience == super::objs::StatusVisibility::Public,
+        visible: audience == super::objs::StatusVisibility::Public ||
+            audience == super::objs::StatusVisibility::Unlisted,
+    };
+    if audience == super::objs::StatusVisibility::Public ||
+        audience == super::objs::StatusVisibility::Unlisted ||
+        audience == super::objs::StatusVisibility::Private {
+        new_status_audiences.push(models::StatusAudience {
+            id: uuid::Uuid::new_v4(),
+            status_id: new_status.id,
+            mention: false,
+            account: None,
+            account_followers: Some(account.id)
+        });
+    }
+
+    let s = crate::db_run(&db, move |c| -> QueryResult<_> {
+        c.transaction::<_, diesel::result::Error, _>(|| {
+            let s = diesel::insert_into(crate::schema::statuses::dsl::statuses)
+                .values(new_status)
+                .get_result::<models::Status>(c)?;
+            diesel::insert_into(crate::schema::status_audiences::dsl::status_audiences)
+                .values(new_status_audiences)
+                .execute(c)?;
+            Ok(s)
+        })
+    }).await?;
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, s, Some(&account)).await?))
+}
+
 #[get("/api/v1/statuses/<status_id>")]
 pub async fn get_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
@@ -251,6 +374,30 @@ pub async fn get_status(
     Ok(rocket::serde::json::Json(render_status(config, &db, status, account.as_ref()).await?))
 }
 
+#[delete("/api/v1/statuses/<status_id>")]
+pub async fn delete_status(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    celery: &rocket::State<crate::CeleryApp>, status_id: String,
+) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    if !user.has_scope("write:statuses") {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let account = super::accounts::get_account(&db, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+
+    if status.account_id != account.id {
+        return Err(rocket::http::Status::Forbidden);
+    }
+
+    let status = crate::db_run(&db, move |c| -> QueryResult<_> {
+        diesel::update(&status)
+            .set(crate::schema::statuses::dsl::deleted_at.eq(Utc::now().naive_utc()))
+            .get_result::<models::Status>(c)
+    }).await?;
+
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+}
 
 #[get("/api/v1/statuses/<status_id>/context")]
 pub async fn status_context(

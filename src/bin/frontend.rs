@@ -57,6 +57,10 @@ async fn main() -> Result<(), rocket::Error> {
 
             tafarn::views::meta::host_meta,
             tafarn::views::meta::web_finger,
+            tafarn::views::meta::well_known_node_info,
+
+            tafarn::views::nodeinfo::node_info_2_0,
+            tafarn::views::nodeinfo::node_info_2_1,
 
             tafarn::views::oauth::api_apps_form,
             tafarn::views::oauth::api_apps_json,
@@ -142,7 +146,9 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::media::get_media,
             tafarn::views::media::update_media,
 
+            tafarn::views::statuses::create_status,
             tafarn::views::statuses::get_status,
+            tafarn::views::statuses::delete_status,
             tafarn::views::statuses::status_context,
             tafarn::views::statuses::status_boosted_by,
             tafarn::views::statuses::status_liked_by,

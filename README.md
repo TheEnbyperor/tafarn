@@ -171,9 +171,9 @@ or `given_name` claim, if `preferred_username` is not available.
 - [ ] GET /api/v1/tags/:id
 
 ### statuses
-- [ ] POST /api/v1/statuses
+- [x] POST /api/v1/statuses
 - [x] GET /api/v1/statuses/:id
-- [ ] DELETE /api/v1/statuses/:id
+- [x] DELETE /api/v1/statuses/:id
 - [x] GET /api/v1/statuses/:id/context
 - [x] GET /api/v1/statuses/:id/reblogged_by
 - [x] GET /api/v1/statuses/:id/favourited_by

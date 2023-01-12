@@ -214,7 +214,12 @@ impl Object {
                 "https://www.w3.org/ns/activitystreams",
                 "https://w3id.org/security/v1",
                 {
+                    "toot": "http://joinmastodon.org/ns#",
+                    "schema": "http://schema.org#",
                     "manuallyApprovesFollowers": "as:manuallyApprovesFollowers",
+                    "PropertyValue": "schema:PropertyValue",
+                    "value": "schema:value",
+                    "discoverable": "toot:discoverable"
                 }
             ]));
         }

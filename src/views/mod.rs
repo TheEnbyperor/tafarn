@@ -23,6 +23,7 @@ pub mod bookmarks;
 pub mod favourites;
 pub mod objs;
 pub mod activity_streams;
+pub mod nodeinfo;
 
 pub fn parse_bool(s: Option<&str>, default: bool) -> Result<bool, rocket::http::Status> {
     Ok(match s {

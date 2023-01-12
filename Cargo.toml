@@ -2,6 +2,7 @@
 name = "tafarn"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/TheEnbyperor/tafarn"
 
 [lib]
 name = "tafarn"
@@ -62,6 +63,8 @@ percent-encoding = "2"
 blurhash = "0.1"
 web_push_old = { package = "web-push", version = "0.7" }
 async-recursion = "1.0.0"
+sanitize_html = "0.7"
+comrak = "0.15"
 
 [profile.release]
 strip = true

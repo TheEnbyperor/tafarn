@@ -179,6 +179,17 @@ async fn _update_status(
                 None => None,
             };
 
+            let summary = o.summary.as_deref()
+                .map(|s| {
+                    sanitize_html::sanitize_str(&crate::HTML_RULES, s)
+                        .with_unexpected_err(|| "Unable to sanitize summary")
+                }).transpose()?;
+            let content = o.content.as_deref()
+                .map(|s| {
+                    sanitize_html::sanitize_str(&crate::HTML_RULES, s)
+                        .with_unexpected_err(|| "Unable to sanitize content")
+                }).transpose()?;
+
             let account = match account {
                 Some(account) => account,
                 None => match o.attributed_to {
@@ -205,12 +216,12 @@ async fn _update_status(
                     }
 
                     existing_status.uri = o.url.clone().and_then(resolve_url);
-                    existing_status.text = o.content.unwrap_or_default();
+                    existing_status.text = content.unwrap_or_default();
                     existing_status.created_at = o.published.map(|p| p.naive_utc())
                         .unwrap_or(existing_status.created_at);
                     existing_status.updated_at = o.updated.map(|u| u.naive_utc())
                         .unwrap_or(existing_status.updated_at);
-                    existing_status.spoiler_text = o.summary.unwrap_or_default();
+                    existing_status.spoiler_text = summary.unwrap_or_default();
                     existing_status.public = audiences.to_public;
                     existing_status.visible = audiences.to_public || audiences.cc_public;
                     existing_status.in_reply_to_url = if in_reply_to.is_some() {
@@ -234,7 +245,7 @@ async fn _update_status(
                         id: status_id,
                         url: id.to_string(),
                         uri: o.url.clone().and_then(resolve_url),
-                        text: o.content.unwrap_or_default(),
+                        text: content.unwrap_or_default(),
                         created_at: o.published.unwrap_or_else(|| Utc::now()).naive_utc(),
                         updated_at: o.updated.or(o.published).unwrap_or_else(|| Utc::now()).naive_utc(),
                         in_reply_to_url: if in_reply_to.is_some() {
@@ -246,7 +257,7 @@ async fn _update_status(
                         boost_of_id: None,
                         boost_of_url: None,
                         sensitive: false,
-                        spoiler_text: o.summary.unwrap_or_default(),
+                        spoiler_text: summary.unwrap_or_default(),
                         language: None,
                         local: false,
                         account_id: account.id,

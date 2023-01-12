@@ -1,6 +1,3 @@
-use celery::error::TaskError;
-use celery::prelude::TaskResultExt;
-use celery::task::TaskResult;
 use crate::views::activity_streams;
 
 pub mod inbox;
