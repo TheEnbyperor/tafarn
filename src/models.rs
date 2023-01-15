@@ -111,6 +111,7 @@ pub struct Account {
     pub header_content_type: Option<String>,
     pub header_remote_url: Option<String>,
     pub follower_collection_url: Option<String>,
+    pub deleted_at: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Insertable, Clone, Debug)]
@@ -301,6 +302,8 @@ pub struct Status {
     pub edited_at: Option<chrono::NaiveDateTime>,
     pub public: bool,
     pub visible: bool,
+    pub text_source: Option<String>,
+    pub spoiler_text_source: Option<String>,
 }
 
 impl Status {
@@ -347,6 +350,8 @@ pub struct NewStatus {
     pub edited_at: Option<chrono::NaiveDateTime>,
     pub public: bool,
     pub visible: bool,
+    pub text_source: Option<String>,
+    pub spoiler_text_source: Option<String>,
 }
 
 #[derive(Insertable, Queryable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
@@ -470,4 +475,11 @@ pub struct AccountNote {
     pub account: uuid::Uuid,
     pub owner: uuid::Uuid,
     pub note: String,
+}
+
+#[derive(Insertable, Queryable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="media_attachments"]
+pub struct MediaAttachment {
+    pub status: uuid::Uuid,
+    pub media: uuid::Uuid,
 }

@@ -65,6 +65,7 @@ web_push_old = { package = "web-push", version = "0.7" }
 async-recursion = "1.0.0"
 sanitize_html = "0.7"
 comrak = "0.15"
+bytes = "1"
 
 [profile.release]
 strip = true

@@ -53,7 +53,10 @@ pub async fn render_status(
         None => None
     };
 
-    let (boost_count, replies_count) = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let (like_count, boost_count, replies_count) = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let lc = crate::schema::likes::dsl::likes.filter(
+            crate::schema::likes::dsl::status.eq(status.id)
+        ).count().get_result::<i64>(c)?;
         let bc = crate::schema::statuses::dsl::statuses.filter(
             crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
@@ -64,7 +67,18 @@ pub async fn render_status(
         ).filter(
             crate::schema::statuses::dsl::deleted_at.is_null()
         ).count().get_result::<i64>(c)?;
-        Ok((bc, rc))
+        Ok((lc, bc, rc))
+    }).await?;
+
+    let media_attachments: Vec<(models::MediaAttachment, models::Media)> =
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::schema::media_attachments::dsl::media_attachments.filter(
+            crate::schema::media_attachments::dsl::status.eq(status.id)
+        ).inner_join(
+            crate::schema::media::table.on(
+                crate::schema::media::dsl::id.eq(crate::schema::media_attachments::dsl::media)
+            )
+        ).get_results(c)
     }).await?;
 
     let boosted = match req_account_id {
@@ -131,12 +145,13 @@ pub async fn render_status(
         visibility,
         sensitive: status.sensitive,
         spoiler_text: status.spoiler_text,
-        media_attachments: vec![],
+        media_attachments: media_attachments.into_iter()
+            .map(|(_, m)| super::media::render_media_attachment(m, config)).collect::<Result<Vec<_>, _>>()?,
         mentions: vec![],
         tags: vec![],
         emojis: vec![],
         reblogs_count: boost_count as u64,
-        favourites_count: 0,
+        favourites_count: like_count as u64,
         replies_count: replies_count as u64,
         url: status.uri,
         in_reply_to_id: in_reply_to.as_ref().map(|x| x.0.iid.to_string()),
@@ -350,7 +365,8 @@ pub async fn _create_status(
     }
 
     let account = super::accounts::get_account(&db, &user).await?;
-    let status_text = comrak::markdown_to_html(&form.status.unwrap_or(""), &crate::COMRAK_OPTIONS);
+    let status_source = form.status.unwrap_or("");
+    let status_text = comrak::markdown_to_html(status_source, &crate::COMRAK_OPTIONS);
     let language = form.language.or(account.default_language.as_deref())
         .map(|x| x.to_string());
     let in_reply_to = match form.in_reply_to_id {
@@ -408,6 +424,8 @@ pub async fn _create_status(
         public: form.visibility == super::objs::StatusVisibility::Public,
         visible: form.visibility == super::objs::StatusVisibility::Public ||
             form.visibility == super::objs::StatusVisibility::Unlisted,
+        text_source: Some(status_source.to_string()),
+        spoiler_text_source: Some(form.spoiler_text.unwrap_or_default().to_string()),
     };
     if form.visibility == super::objs::StatusVisibility::Public ||
         form.visibility == super::objs::StatusVisibility::Unlisted ||
@@ -421,6 +439,11 @@ pub async fn _create_status(
         });
     }
 
+    let new_status_media = media.iter().map(|m| models::MediaAttachment {
+        status: new_status.id,
+        media: m.id
+    }).collect::<Vec<_>>();
+
     let s = crate::db_run(&db, move |c| -> QueryResult<_> {
         c.transaction::<_, diesel::result::Error, _>(|| {
             let s = diesel::insert_into(crate::schema::statuses::dsl::statuses)
@@ -428,6 +451,9 @@ pub async fn _create_status(
                 .get_result::<models::Status>(c)?;
             diesel::insert_into(crate::schema::status_audiences::dsl::status_audiences)
                 .values(new_status_audiences)
+                .execute(c)?;
+            diesel::insert_into(crate::schema::media_attachments::dsl::media_attachments)
+                .values(new_status_media)
                 .execute(c)?;
             Ok(s)
         })
@@ -762,6 +788,8 @@ pub async fn boost_status(
         public: audience == super::objs::StatusVisibility::Public,
         visible: audience == super::objs::StatusVisibility::Public ||
             audience == super::objs::StatusVisibility::Unlisted,
+        text_source: None,
+        spoiler_text_source: None,
     };
     let new_audience_followers = models::StatusAudience {
         id: uuid::Uuid::new_v4(),

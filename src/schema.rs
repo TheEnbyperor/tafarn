@@ -108,6 +108,7 @@ table! {
         header_content_type -> Nullable<Varchar>,
         header_remote_url -> Nullable<Varchar>,
         follower_collection_url -> Nullable<Varchar>,
+        deleted_at -> Nullable<Timestamp>,
     }
 }
 
@@ -219,6 +220,8 @@ table! {
         edited_at -> Nullable<Timestamp>,
         public -> Bool,
         visible -> Bool,
+        text_source -> Nullable<Varchar>,
+        spoiler_text_source -> Nullable<Varchar>,
     }
 }
 
@@ -294,6 +297,13 @@ table! {
     }
 }
 
+table! {
+    media_attachments (status, media) {
+        status -> Uuid,
+        media -> Uuid,
+    }
+}
+
 joinable!(app_scopes -> apps (app_id));
 joinable!(oauth_consent_scopes -> oauth_consents (consent_id));
 joinable!(oauth_code_scopes -> oauth_codes (code_id));
@@ -333,5 +343,6 @@ allow_tables_to_appear_in_same_query!(
     likes,
     bookmarks,
     pins,
-    account_notes
+    account_notes,
+    media_attachments,
 );

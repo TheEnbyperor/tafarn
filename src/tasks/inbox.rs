@@ -192,19 +192,43 @@ async fn _process_activity(activity: activity_streams::Object, signature: Option
                 }
                 activity_streams::Object::Delete(a) => {
                     match &a.object {
-                        Some(o) => {
-                            match resolve_object_or_link(o.clone()).await {
-                                Some(activity_streams::Object::Tombstone(t)) => {
+                        Some(activity_streams::ReferenceOrObject::Reference(id)) => {
+                            celery.send_task(
+                                super::statuses::delete_status_by_id::new(id.clone(), account.clone())
+                            ).await.with_expected_err(|| "Unable to send task")?;
+                            celery.send_task(
+                                super::accounts::delete_account_by_id::new(id.clone(), account)
+                            ).await.with_expected_err(|| "Unable to send task")?;
+                        },
+                        Some(activity_streams::ReferenceOrObject::Object(o)) => match o.as_ref() {
+                            activity_streams::ObjectOrLink::Object(activity_streams::Object::Tombstone(t)) => {
+                                celery.send_task(
+                                    super::statuses::delete_status::new(t.clone(), account.clone())
+                                ).await.with_expected_err(|| "Unable to send task")?;
+                                celery.send_task(
+                                    super::accounts::delete_account::new(t.clone(), account)
+                                ).await.with_expected_err(|| "Unable to send task")?;
+                            },
+                            activity_streams::ObjectOrLink::Object(activity_streams::Object::Note(n)) => {
+                                if let Some(id) = &n.id {
                                     celery.send_task(
-                                        super::statuses::delete_status::new(t.clone(), account)
+                                        super::statuses::delete_status_by_id::new(id.clone(), account.clone())
                                     ).await.with_expected_err(|| "Unable to send task")?;
                                 }
-                                Some(_) => {
-                                    warn!("Object does not support delete: {:?}", a);
+                            }
+                            activity_streams::ObjectOrLink::Object(activity_streams::Object::Person(p)) |
+                                activity_streams::ObjectOrLink::Object(activity_streams::Object::Application(p)) |
+                                activity_streams::ObjectOrLink::Object(activity_streams::Object::Group(p)) |
+                                activity_streams::ObjectOrLink::Object(activity_streams::Object::Service(p)) |
+                                activity_streams::ObjectOrLink::Object(activity_streams::Object::Organization(p)) => {
+                                if let Some(id) = &p.common.id {
+                                    celery.send_task(
+                                        super::accounts::delete_account_by_id::new(id.clone(), account)
+                                    ).await.with_expected_err(|| "Unable to send task")?;
                                 }
-                                None => {
-                                    return Err(TaskError::ExpectedError(format!("Unable to resolve object {:?}", o)));
-                                }
+                            },
+                            _ => {
+                                warn!("Object does not support delete: {:?}", a);
                             }
                         }
                         None => {

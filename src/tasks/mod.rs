@@ -1,5 +1,6 @@
 use crate::views::activity_streams;
 
+pub mod collection;
 pub mod inbox;
 pub mod accounts;
 pub mod relationships;
@@ -58,11 +59,22 @@ fn sign_request(req: &mut reqwest::Request, pkey: &openssl::pkey::PKeyRef<openss
     Ok(())
 }
 
-async fn fetch_object<'a, T: serde::de::DeserializeOwned, U: Into<std::borrow::Cow<'a, str>>>(uri: U) -> Option<T> {
-    let uri = uri.into();
+async fn authenticated_get(url: reqwest::Url) -> Result<reqwest::Response, String> {
     let config = config();
     let pkey = config.as_key;
+    let host = url.host_str().map(|h| h.to_string()).ok_or("No host in URL")?;
+    let date = chrono::Utc::now().naive_utc().format("%a, %d %h %Y %H:%M:%S GMT").to_string();
+    let mut req = crate::AS_CLIENT.get(url.clone())
+        .header("Host", &host)
+        .header("Date", &date)
+        .build().map_err(|e| format!("Unable to build request: {}", e))?;
 
+    sign_request(&mut req, &pkey, format!("https://{}/as/system#key", config.uri))?;
+    crate::AS_CLIENT.execute(req).await.map_err(|e| format!("Unable to send request: {}", e))
+}
+
+async fn fetch_object<'a, T: serde::de::DeserializeOwned, U: Into<std::borrow::Cow<'a, str>>>(uri: U) -> Option<T> {
+    let uri = uri.into();
     let url = match reqwest::Url::parse(&uri) {
         Ok(url) => url,
         Err(e) => {
@@ -70,24 +82,9 @@ async fn fetch_object<'a, T: serde::de::DeserializeOwned, U: Into<std::borrow::C
             return None;
         }
     };
-    let host = url.host_str().map(|h| h.to_string())?;
-    let date = chrono::Utc::now().naive_utc().format("%a, %d %h %Y %H:%M:%S GMT").to_string();
 
     match backoff::future::retry(backoff::ExponentialBackoff::default(), || async {
-        let mut req = match crate::AS_CLIENT.get(url.clone())
-            .header("Host", &host)
-            .header("Date", &date)
-            .build() {
-            Ok(req) => req,
-            Err(e) => return Err(backoff::Error::Permanent(e.to_string()))
-        };
-
-        match sign_request(&mut req, &pkey, format!("https://{}/as/system#key", config.uri)) {
-            Ok(()) => (),
-            Err(e) => return Err(backoff::Error::Permanent(e))
-        }
-
-        match crate::AS_CLIENT.execute(req).await {
+        match authenticated_get(url.clone()).await {
             Ok(r) => {
                 match r.error_for_status() {
                     Ok(r) => {

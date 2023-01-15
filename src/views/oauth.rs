@@ -427,6 +427,8 @@ pub async fn oauth_authorize(
         None => false,
         Some("true") => true,
         Some("1") => true,
+        Some("0") => false,
+        Some("false") => false,
         _ => {
             redirect_uri.query_pairs_mut().append_pair("error", "invalid_request");
             return Ok(OAuthAuthorizeResponse::RocketRedirect(rocket::response::Redirect::to(redirect_uri.to_string())));

@@ -4496,6 +4496,7 @@ dependencies = [
  "backoff",
  "base64 0.13.1",
  "blurhash",
+ "bytes 1.3.0",
  "celery",
  "chrono",
  "clap",

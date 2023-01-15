@@ -211,6 +211,8 @@ pub async fn setup() -> App {
             tasks::accounts::update_accounts,
             tasks::accounts::update_account_relations,
             tasks::accounts::deliver_account_update,
+            tasks::accounts::delete_account,
+            tasks::accounts::delete_account_by_id,
 
             tasks::inbox::process_activity,
             tasks::delivery::deliver_object,
@@ -229,6 +231,7 @@ pub async fn setup() -> App {
             tasks::statuses::create_announce,
             tasks::statuses::create_like,
             tasks::statuses::delete_status,
+            tasks::statuses::delete_status_by_id,
             tasks::statuses::undo_announce,
             tasks::statuses::undo_like,
             tasks::statuses::insert_into_timelines,

@@ -1,7 +1,7 @@
 use crate::models;
 use crate::views::activity_streams::{self, ObjectID};
 use celery::prelude::*;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use diesel::prelude::*;
 use itertools::Itertools;
 use futures::stream::StreamExt;
@@ -22,7 +22,14 @@ async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams:
             activity_streams::URLOrLink::URL(url) => url,
             activity_streams::URLOrLink::Link(l) => l.href?,
         };
-        match crate::AS_CLIENT.get(&url).send().await {
+        let url = match reqwest::Url::parse(&url) {
+            Ok(url) => url,
+            Err(e) => {
+                warn!("Unable to parse URL {}: {}", url, e);
+                return None;
+            }
+        };
+        match super::authenticated_get(url.clone()).await {
             Ok(r) => match r.error_for_status() {
                 Ok(r) => match r.bytes().await {
                     Ok(b) => {
@@ -31,7 +38,7 @@ async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams:
                         let image_path = format!("./media/{}", image_name);
                         match std::fs::write(&image_path, &b) {
                             Ok(_) => {
-                                Some((image_name, url, content_type))
+                                Some((image_name, url.to_string(), content_type))
                             },
                             Err(e) => {
                                 error!("Unable to write avatar file: {}", e);
@@ -300,146 +307,6 @@ async fn _update_account(
     }
 }
 
-struct CollectionStream {
-    collection: activity_streams::Collection,
-    page_cache: Vec<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>,
-    next_page: Option<activity_streams::ReferenceOrObject<activity_streams::CollectionPageOrLink>>,
-    resolve_fut: Option<futures::future::BoxFuture<'static, Option<activity_streams::CollectionPageOrLink>>>,
-    fetch_link_fut: Option<futures::future::BoxFuture<'static, Option<activity_streams::CollectionPage>>>,
-}
-
-impl CollectionStream {
-    fn poll_fetch_link(
-        mut self: std::pin::Pin<&mut Self>, cx: &mut futures::task::Context<'_>
-    ) -> futures::task::Poll<Option<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>> {
-        match std::future::Future::poll(self.fetch_link_fut.as_mut().unwrap().as_mut(), cx) {
-            futures::task::Poll::Ready(page) => {
-                if let Some(page) = page {
-                    self.next_page = page.next;
-                    if let Some(items) = page.common.items {
-                        self.page_cache.extend(items);
-                    }
-                    futures::task::Poll::Ready(self.page_cache.pop())
-                } else {
-                    warn!("Unable to fetch collection page");
-                    futures::task::Poll::Ready(None)
-                }
-            }
-            futures::task::Poll::Pending => futures::task::Poll::Pending
-        }
-    }
-
-    fn poll_resolve_object(
-        mut self: std::pin::Pin<&mut Self>, cx: &mut futures::task::Context<'_>
-    ) -> futures::task::Poll<Option<activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>>> {
-        match std::future::Future::poll(self.resolve_fut.as_mut().unwrap().as_mut(), cx) {
-            futures::task::Poll::Ready(page) => {
-                self.resolve_fut = None;
-                match page {
-                    Some(o) => {
-                        let page = match match o {
-                            activity_streams::CollectionPageOrLink::Link(l) => {
-                                if let Some(l) = l.href {
-                                    println!("Fetching {}", l);
-                                    let fut = fetch_object(l);
-                                    self.fetch_link_fut = Some(Box::pin(fut));
-                                    return self.poll_fetch_link(cx);
-                                } else {
-                                    None
-                                }
-                            }
-                            activity_streams::CollectionPageOrLink::CollectionPage(o) |
-                            activity_streams::CollectionPageOrLink::OrderedCollectionPage(o) => {
-                                Some(o)
-                            }
-                        } {
-                            Some(p) => p,
-                            None => {
-                                warn!("Unable to fetch collection page");
-                                return futures::task::Poll::Ready(None);
-                            }
-                        };
-                        self.next_page = page.next;
-                        if let Some(items) = page.common.items {
-                            self.page_cache.extend(items);
-                        }
-                        futures::task::Poll::Ready(self.page_cache.pop())
-                    }
-                    None => {
-                        warn!("Unable to resolve object: {:?}", self.next_page);
-                        futures::task::Poll::Ready(None)
-                    }
-                }
-            }
-            futures::task::Poll::Pending => futures::task::Poll::Pending
-        }
-    }
-}
-
-impl futures::stream::Stream for CollectionStream {
-    type Item = activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>;
-
-    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut futures::task::Context<'_>) -> futures::task::Poll<Option<Self::Item>> {
-        if let Some(item) = self.page_cache.pop() {
-            futures::task::Poll::Ready(Some(item))
-        } else {
-            if self.fetch_link_fut.is_some() {
-                self.poll_fetch_link(cx)
-            } else if self.resolve_fut.is_some() {
-                self.poll_resolve_object(cx)
-            } else {
-                if let Some(obj) = &self.next_page {
-                    self.resolve_fut = Some(Box::pin(resolve_object(obj.clone())));
-                    self.poll_resolve_object(cx)
-                } else {
-                    futures::task::Poll::Ready(None)
-                }
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.page_cache.len(), self.collection.total_items.map(|t| t as usize))
-    }
-}
-
-fn fetch_entire_collection(
-    collection: activity_streams::Object
-) -> TaskResult<CollectionStream> {
-    match collection {
-        activity_streams::Object::Collection(c) |
-        activity_streams::Object::OrderedCollection(c) => {
-            if let Some(items) = &c.items {
-                let items = items.clone();
-                Ok(CollectionStream {
-                    next_page: None,
-                    page_cache: items,
-                    collection: c,
-                    resolve_fut: None,
-                    fetch_link_fut: None,
-                })
-            } else if let Some(first) = &c.first {
-                Ok(CollectionStream {
-                    next_page: Some(first.clone()),
-                    page_cache: vec![],
-                    collection: c,
-                    resolve_fut: None,
-                    fetch_link_fut: None,
-                })
-            } else {
-                Ok(CollectionStream {
-                    next_page: None,
-                    page_cache: vec![],
-                    collection: c,
-                    resolve_fut: None,
-                    fetch_link_fut: None,
-                })
-            }
-        }
-        o => Err(TaskError::UnexpectedError(format!("Not a collection: {:?}", o)))
-    }
-}
-
 #[derive(Hash, Debug, Eq)]
 enum NonMatchingOption<T> {
     None,
@@ -499,7 +366,7 @@ pub async fn update_account_relations(
 
     let followers = match followers {
         Some(c) => {
-            let cs = fetch_entire_collection(c)?;
+            let cs = super::collection::fetch_entire_collection(c)?;
             if let Some(t) = cs.collection.total_items {
                 account.follower_count = t as i32;
             }
@@ -509,7 +376,7 @@ pub async fn update_account_relations(
     };
     let following = match following {
         Some(c) => {
-            let cs = fetch_entire_collection(c)?;
+            let cs = super::collection::fetch_entire_collection(c)?;
             if let Some(t) = cs.collection.total_items {
                 account.following_count = t as i32;
             }
@@ -725,7 +592,7 @@ pub async fn find_account(
             } else {
                 let object: activity_streams::Object = match fetch_object(&r).await {
                     Some(o) => o,
-                    None => return Err(TaskError::ExpectedError(format!("Error fetching object {}", r)))
+                    None => return Ok(None)
                 };
 
                 _update_account(object, true, follow_graph).await
@@ -856,4 +723,50 @@ pub async fn deliver_account_update(
     super::delivery::deliver_dedupe_inboxes(activity, followers, account).await?;
 
     Ok(())
+}
+
+async fn _delete_account_by_id(id: &str, account: models::Account, deleted: DateTime<Utc>) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+
+    if let Some(mut del_account) = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        crate::schema::accounts::dsl::accounts.filter(
+            crate::schema::accounts::dsl::url.eq(id)
+        ).get_result::<models::Account>(&c).optional().with_expected_err(|| "Unable to fetch account")
+    })? {
+        if del_account.local {
+            warn!("Account \"{}\" is local, ignoring delete", del_account.id);
+            return Ok(());
+        }
+
+        if account.id != del_account.id {
+            warn!("Account \"{}\" is not owned by account \"{}\", ignoring delete", del_account.id, account.id);
+            return Ok(());
+        }
+
+        del_account.deleted_at = Some(deleted.naive_utc());
+
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            diesel::update(crate::schema::accounts::dsl::accounts.find(del_account.id))
+                .set(&del_account)
+                .execute(&c).with_expected_err(|| "Unable to update account")
+        })?;
+    }
+    Ok(())
+}
+
+#[celery::task]
+pub async fn delete_account(tombstone: activity_streams::Tombstone, account: models::Account) -> TaskResult<()> {
+    let id = match &tombstone.common.id {
+        Some(id) => id,
+        None => return Err(TaskError::UnexpectedError(format!("Tombstone has no ID: {:?}", tombstone)))
+    };
+    _delete_account_by_id(id.as_str(), account, tombstone.deleted.unwrap_or_else(Utc::now)).await
+}
+
+#[celery::task]
+pub async fn delete_account_by_id(id: String, account: models::Account) -> TaskResult<()> {
+    _delete_account_by_id(id.as_str(), account, Utc::now()).await
 }

@@ -2,7 +2,7 @@ use chrono::prelude::*;
 use diesel::prelude::*;
 use celery::prelude::*;
 use crate::models;
-use crate::tasks::{fetch_object, resolve_object_or_link, resolve_url};
+use crate::tasks::{fetch_object, resolve_object, resolve_object_or_link, resolve_url};
 use crate::views::activity_streams::{self, ObjectID};
 
 pub async fn get_status(status: activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>) -> TaskResult<models::Status> {
@@ -139,6 +139,167 @@ async fn resolve_audiences(object: &activity_streams::ObjectCommon, status_id: u
     })
 }
 
+fn image_format_to_content_type(format: image::ImageFormat) -> &'static str {
+    match format {
+        image::ImageFormat::Bmp => "image/bmp",
+        image::ImageFormat::Gif => "image/gif",
+        image::ImageFormat::Ico => "image/x-icon",
+        image::ImageFormat::Jpeg => "image/jpeg",
+        image::ImageFormat::Png => "image/png",
+        image::ImageFormat::Pnm => "image/x-portable-bitmap",
+        image::ImageFormat::Tiff => "image/tiff",
+        image::ImageFormat::WebP => "image/webp",
+        image::ImageFormat::Dds => "image/vnd.ms-dds",
+        image::ImageFormat::Avif => "image/avif",
+        image::ImageFormat::Tga => "image/x-targa",
+        image::ImageFormat::Hdr => "image/vnd.radiance",
+        image::ImageFormat::OpenExr => "image/x-exr",
+        _ => "application/octet-stream"
+    }
+}
+
+struct Attachment {
+    remote_url: String,
+    file_name: String,
+    format: AttachmentFormat
+}
+
+#[non_exhaustive]
+enum AttachmentFormat {
+    Image(image::ImageFormat),
+}
+
+impl AttachmentFormat {
+    fn content_type(&self) -> &'static str {
+        match self {
+            AttachmentFormat::Image(f) => image_format_to_content_type(*f)
+        }
+    }
+}
+
+async fn _download_object(obj: &activity_streams::ObjectOrLink) -> Option<Attachment> {
+    match obj {
+        activity_streams::ObjectOrLink::Object(activity_streams::Object::Document(doc)) |
+        activity_streams::ObjectOrLink::Object(activity_streams::Object::Image(doc)) => {
+            let url = doc.url.clone()?;
+            let content_type = doc.media_type.as_deref()?;
+            let format = image::ImageFormat::from_mime_type(content_type)?;
+            if format != image::ImageFormat::Png && format != image::ImageFormat::Jpeg &&
+                format != image::ImageFormat::Gif {
+                warn!("Unsupported attachment format: {}", content_type);
+                return None;
+            }
+            let url = match url {
+                activity_streams::URLOrLink::URL(url) => url,
+                activity_streams::URLOrLink::Link(l) => l.href?,
+            };
+            let url = match reqwest::Url::parse(&url) {
+                Ok(url) => url,
+                Err(e) => {
+                    warn!("Unable to parse URL {}: {}", url, e);
+                    return None;
+                }
+            };
+            match super::authenticated_get(url.clone()).await {
+                Ok(r) => match r.error_for_status() {
+                    Ok(r) => match r.bytes().await {
+                        Ok(b) => {
+                            let doc_id = uuid::Uuid::new_v4();
+                            let doc_name = format!("{}.{}", doc_id.to_string(), format.extensions_str()[0]);
+                            let doc_path = format!("./media/{}", &doc_name);
+                            match std::fs::write(&doc_path, &b) {
+                                Ok(_) => {
+                                    Some(Attachment {
+                                        remote_url: url.to_string(),
+                                        file_name: doc_name,
+                                        format: AttachmentFormat::Image(format)
+                                    })
+                                },
+                                Err(e) => {
+                                    error!("Unable to write attachment file: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Unable to fetch attachment \"{}\": {}", url, e);
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Unable to fetch attachment \"{}\": {}", url, e);
+                        None
+                    }
+                }
+                Err(e) => {
+                    warn!("Unable to fetch attachment \"{}\": {}", url, e);
+                    None
+                }
+            }
+        },
+        _ => None
+    }
+}
+
+async fn fetch_attachment(attachment: activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>) -> Option<models::Media> {
+    let attachment = resolve_object(attachment).await?;
+    let f = _download_object(&attachment).await?;
+    if let activity_streams::ObjectOrLink::Object(activity_streams::Object::Document(doc)) |
+    activity_streams::ObjectOrLink::Object(activity_streams::Object::Image(doc)) = attachment {
+        let (preview_doc_name, preview_format) = if let Some(preview) = doc.preview {
+            let preview = resolve_object(preview).await?;
+            let doc = _download_object(&preview).await?;
+            (Some(doc.file_name), Some(doc.format))
+        } else {
+            match f.format {
+                AttachmentFormat::Image(format) => {
+                    let doc_path = format!("./media/{}", &f.file_name);
+                    let mut image_r = image::io::Reader::open(doc_path).ok()?;
+                    image_r.set_format(format);
+                    if let Some(image) = image_r.decode().ok() {
+                        let doc_id = uuid::Uuid::new_v4();
+                        let doc_name = format!("{}.{}", doc_id.to_string(), format.extensions_str()[0]);
+                        let doc_path = format!("./media/{}", &doc_name);
+                        let preview_image = image.thumbnail(crate::PREVIEW_DIMENSION, crate::PREVIEW_DIMENSION);
+                        let mut out_image_bytes: Vec<u8> = Vec::new();
+                        preview_image.write_to(&mut std::io::Cursor::new(&mut out_image_bytes), image::ImageOutputFormat::Jpeg(80)).ok()?;
+                        std::fs::write(&doc_path, &out_image_bytes).ok()?;
+                        (Some(doc_name), Some(AttachmentFormat::Image(image::ImageFormat::Jpeg)))
+                    } else {
+                        (None, None)
+                    }
+                }
+                _ => (None, None)
+            }
+        };
+
+
+        let new_media = models::Media {
+            id: uuid::Uuid::new_v4(),
+            media_type: "image".to_string(),
+            file: Some(f.file_name),
+            content_type: Some(f.format.content_type().to_string()),
+            remote_url: Some(f.remote_url.to_string()),
+            preview_file: preview_doc_name,
+            preview_content_type: preview_format.map(|f| f.content_type().to_string()),
+            blurhash: doc.blurhash,
+            focus_x: doc.focal_points.map(|f| f.0),
+            focus_y: doc.focal_points.map(|f| f.1),
+            original_width: doc.width.map(|w| w as i32),
+            original_height: doc.height.map(|h| h as i32),
+            preview_width: None,
+            preview_height: None,
+            created_at: doc.published.unwrap_or_else(Utc::now).naive_utc(),
+            description: doc.summary,
+            owned_by: None
+        };
+
+        Some(new_media)
+    } else {
+        None
+    }
+}
+
 #[async_recursion::async_recursion]
 async fn _update_status(
     object: activity_streams::Object, account: Option<models::Account>, new_status: bool,
@@ -265,13 +426,30 @@ async fn _update_status(
                         edited_at: None,
                         public: audiences.to_public,
                         visible: audiences.to_public || audiences.cc_public,
+                        text_source: None,
+                        spoiler_text_source: None,
                     };
+
+
+                    let mut media_attachments = vec![];
+                    for attachment in o.attachment.to_vec() {
+                        if let Some(media) = fetch_attachment(attachment).await {
+                            media_attachments.push(models::MediaAttachment {
+                                status: new_status.id,
+                                media: media.id,
+                            })
+                        }
+                    }
 
                     tokio::task::block_in_place(|| -> TaskResult<_> {
                         let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-                        diesel::insert_into(crate::schema::statuses::dsl::statuses)
+                        let s = diesel::insert_into(crate::schema::statuses::dsl::statuses)
                             .values(&new_status)
-                            .get_result(&c).with_expected_err(|| "Unable to insert status")
+                            .get_result(&c).with_expected_err(|| "Unable to insert status")?;
+                        diesel::insert_into(crate::schema::media_attachments::dsl::media_attachments)
+                            .values(&media_attachments)
+                            .execute(&c).with_expected_err(|| "Unable to insert media attachments")?;
+                        Ok(s)
                     })?
                 }
             };
@@ -405,6 +583,8 @@ pub async fn create_announce(
                 edited_at: None,
                 public: audiences.to_public,
                 visible: audiences.to_public || audiences.cc_public,
+                text_source: None,
+                spoiler_text_source: None,
             };
 
             tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -533,6 +713,11 @@ pub async fn delete_status(
         None => return Err(TaskError::UnexpectedError(format!("Tombstone has no ID: {:?}", tombstone)))
     };
     _delete_status_by_id(id.as_str(), account, tombstone.deleted.unwrap_or_else(Utc::now)).await
+}
+
+#[celery::task]
+pub async fn delete_status_by_id(id: String, account: models::Account) -> TaskResult<()> {
+    _delete_status_by_id(id.as_str(), account, Utc::now()).await
 }
 
 #[celery::task]
@@ -733,21 +918,35 @@ pub async fn make_audiences(status: &models::Status, resolve_delivery: bool) -> 
 
 pub fn as_render_status(
     status: &models::Status, account: &models::Account, aud: &ASAudiences
-) -> activity_streams::Object {
+) -> TaskResult<activity_streams::Object> {
     let config = super::config();
+    let db = config.db.clone();
 
     if let Some(deleted_at) = &status.deleted_at {
-        return activity_streams::Object::Tombstone(activity_streams::Tombstone {
+        return Ok(activity_streams::Object::Tombstone(activity_streams::Tombstone {
             common: activity_streams::ObjectCommon {
                 id: Some(status.url(&config.uri)),
                 ..Default::default()
             },
             former_type: Some("Note".to_string()),
             deleted: Some(Utc.from_utc_datetime(deleted_at))
-        })
+        }))
     }
 
-    activity_streams::Object::Note(activity_streams::ObjectCommon {
+    let attachments: Vec<(models::MediaAttachment, models::Media)> = tokio::task::block_in_place(|| -> TaskResult<_> {
+        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+        let attachments = crate::schema::media_attachments::dsl::media_attachments.filter(
+            crate::schema::media_attachments::dsl::status.eq(status.id)
+        ).inner_join(
+            crate::schema::media::table.on(
+                crate::schema::media::dsl::id.eq(crate::schema::media_attachments::dsl::media)
+            )
+        ).get_results(&c).with_expected_err(|| "Unable to get attachments")?;
+
+        Ok(attachments)
+    })?;
+
+    Ok(activity_streams::Object::Note(activity_streams::ObjectCommon {
         id: Some(status.url(&config.uri)),
         published: Some(Utc.from_utc_datetime(&status.created_at)),
         updated: Some(Utc.from_utc_datetime(&status.updated_at)),
@@ -771,16 +970,42 @@ pub fn as_render_status(
                 (l.clone(), status.spoiler_text.clone())
             ]))
         }),
+        attachment: activity_streams::Pluralisable::List(attachments.into_iter()
+            .map(|(a, m)| activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
+                activity_streams::Object::Document(activity_streams::ObjectCommon {
+                    url: m.file.map(|f| activity_streams::URLOrLink::URL(format!("https://{}/media/{}", config.uri, f))),
+                    summary: m.description,
+                    blurhash: m.blurhash,
+                    width: m.original_width.map(|w| w as u64),
+                    height: m.original_height.map(|h| h as u64),
+                    media_type: m.content_type,
+                    published: Some(Utc.from_utc_datetime(&m.created_at)),
+                    focal_points: match (m.focus_x, m.focus_y) {
+                        (Some(x), Some(y)) => Some((x, y)),
+                        _ => None
+                    },
+                    preview: m.preview_file.map(|p| activity_streams::ReferenceOrObject::Object(Box::new(
+                        activity_streams::ObjectOrLink::Object(activity_streams::Object::Document(activity_streams::ObjectCommon {
+                            url: Some(activity_streams::URLOrLink::URL(format!("https://{}/media/{}", config.uri, p))),
+                            media_type: m.preview_content_type,
+                            width: m.preview_width.map(|w| w as u64),
+                            height: m.preview_height.map(|h| h as u64),
+                            ..Default::default()
+                        }))
+                    ))),
+                    ..Default::default()
+                })
+            )))).collect()),
         ..Default::default()
-    })
+    }))
 }
 
 pub fn as_render_status_activity(
     status: &models::Status, account: &models::Account, aud: &ASAudiences
-) -> activity_streams::Object {
+) -> TaskResult<activity_streams::Object> {
     let config = super::config();
 
-    activity_streams::Object::Create(activity_streams::ActivityCommon {
+    Ok(activity_streams::Object::Create(activity_streams::ActivityCommon {
         common: activity_streams::ObjectCommon {
             id: Some(status.activity_url(&config.uri).unwrap_or_default()),
             published: Some(Utc.from_utc_datetime(&status.created_at)),
@@ -790,13 +1015,13 @@ pub fn as_render_status_activity(
         },
         actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
         object: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
-           as_render_status(status, account, aud)
+           as_render_status(status, account, aud)?
         )))),
         target: None,
         result: None,
         origin: None,
         instrument: None,
-    })
+    }))
 }
 
 #[celery::task]
@@ -805,7 +1030,7 @@ pub async fn deliver_status(
 ) -> TaskResult<()> {
     let config = super::config();
     let aud = make_audiences(&status, true).await?;
-    let activity = as_render_status_activity(&status, &account, &aud);
+    let activity = as_render_status_activity(&status, &account, &aud)?;
     config.celery.send_task(
         insert_into_timelines::new(status, aud.audiences)
     ).await.with_expected_err(|| "Unable to submit timelines task")?;
@@ -831,7 +1056,7 @@ pub async fn deliver_status_delete(
             },
             actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
             object: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
-                as_render_status(&status, &account, &aud)
+                as_render_status(&status, &account, &aud)?
             )))),
             target: None,
             result: None,

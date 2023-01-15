@@ -469,6 +469,14 @@ pub struct ObjectCommon {
     pub likes: Option<ReferenceOrObject<Collection>>,
     #[serde(rename = "sensitive", default, skip_serializing_if = "Option::is_none")]
     pub sensitive: Option<bool>,
+    #[serde(rename = "blurhash", default, skip_serializing_if = "Option::is_none")]
+    pub blurhash: Option<String>,
+    #[serde(rename = "height", default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u64>,
+    #[serde(rename = "width", default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u64>,
+    #[serde(rename = "focalPoints", default, skip_serializing_if = "Option::is_none")]
+    pub focal_points: Option<(f64, f64)>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1074,7 +1082,8 @@ pub async fn status(
     }
 
     if status.boost_of_id.is_none() {
-        Ok(crate::tasks::statuses::as_render_status(&status, &account, &aud))
+        crate::tasks::statuses::as_render_status(&status, &account, &aud)
+            .map_err(|_| rocket::http::Status::InternalServerError)
     } else {
         Err(rocket::http::Status::NotFound)
     }
@@ -1124,7 +1133,8 @@ pub async fn status_activity(
 
         Ok(activity)
     } else {
-        Ok(crate::tasks::statuses::as_render_status_activity(&status, &account, &aud))
+        crate::tasks::statuses::as_render_status_activity(&status, &account, &aud)
+            .map_err(|_| rocket::http::Status::InternalServerError)
     }
 }
 

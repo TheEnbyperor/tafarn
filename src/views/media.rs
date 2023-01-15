@@ -51,7 +51,10 @@ pub async fn upload_media(
         None => return Err(rocket::http::Status::InternalServerError)
     }).map_err(|_| rocket::http::Status::InternalServerError)?;
     image_r.set_format(format);
-    let image = image_r.decode().map_err(|_| rocket::http::Status::BadRequest)?;
+    let image = image_r.decode().map_err(|e| {
+        warn!("Failed to decode image: {}", e);
+        rocket::http::Status::UnprocessableEntity
+    })?;
     let (width, height) = image.dimensions();
     let blurhash = blurhash::encode(4, 3, width, height, &image.to_rgba8().into_vec());
 
@@ -130,7 +133,7 @@ pub async fn upload_media(
     }))
 }
 
-fn render_media_attachment(media: crate::models::Media, config: &crate::AppConfig) -> Result<super::objs::MediaAttachment, rocket::http::Status> {
+pub fn render_media_attachment(media: crate::models::Media, config: &crate::AppConfig) -> Result<super::objs::MediaAttachment, rocket::http::Status> {
     Ok(super::objs::MediaAttachment {
         id: media.id.to_string(),
         media_type: match media.media_type.as_str() {
