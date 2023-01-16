@@ -161,6 +161,8 @@ table! {
         followee -> Uuid,
         created_at -> Timestamp,
         pending -> Bool,
+        notify -> Bool,
+        reblogs -> Bool,
     }
 }
 
@@ -304,6 +306,22 @@ table! {
     }
 }
 
+table! {
+    status_mentions (id) {
+        id -> Uuid,
+        status -> Uuid,
+        account -> Uuid,
+        created_at -> Timestamp,
+    }
+}
+
+table! {
+    tags (id) {
+        id -> Uuid,
+        name -> Varchar,
+    }
+}
+
 joinable!(app_scopes -> apps (app_id));
 joinable!(oauth_consent_scopes -> oauth_consents (consent_id));
 joinable!(oauth_code_scopes -> oauth_codes (code_id));
@@ -345,4 +363,6 @@ allow_tables_to_appear_in_same_query!(
     pins,
     account_notes,
     media_attachments,
+    status_mentions,
+    tags
 );

@@ -46,7 +46,9 @@ async fn main() -> Result<(), rocket::Error> {
         .attach(CORS)
         .attach(tafarn::DbConn::fairing())
         .attach(tafarn::csrf::CSRFFairing)
-        .attach(rocket_dyn_templates::Template::fairing())
+        .attach(rocket_dyn_templates::Template::custom(|engines| {
+            engines.tera.register_function("fl", tafarn::i18n::TeraLocalizer::new());
+        }))
         .manage(app.celery_app)
         .mount("/static", rocket::fs::FileServer::from("./static"))
         .mount("/media", rocket::fs::FileServer::from("./media"))
@@ -89,6 +91,7 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::accounts::follow_account,
             tafarn::views::accounts::unfollow_account,
             tafarn::views::accounts::note,
+            tafarn::views::accounts::lookup_account,
 
             tafarn::views::timelines::timeline_home,
             tafarn::views::timelines::timeline_hashtag,
@@ -181,6 +184,7 @@ async fn main() -> Result<(), rocket::Error> {
             tafarn::views::activity_streams::get_shared_inbox,
             tafarn::views::activity_streams::post_shared_inbox,
             tafarn::views::activity_streams::system_actor,
+            tafarn::views::activity_streams::status,
             tafarn::views::activity_streams::status_activity,
             tafarn::views::activity_streams::like,
         ])

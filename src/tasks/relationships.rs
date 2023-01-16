@@ -64,7 +64,7 @@ pub async fn process_follow(
                     created_at: created_at.naive_utc(),
                 })
                 .on_conflict_do_nothing()
-                .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert following")?;
+                .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert notification")?;
             diesel::insert_into(crate::schema::following::dsl::following)
                 .values(models::NewFollowing {
                     id: uuid::Uuid::new_v4(),
@@ -72,6 +72,8 @@ pub async fn process_follow(
                     followee: followed_account.id,
                     created_at: created_at.naive_utc(),
                     pending: false,
+                    notify: false,
+                    reblogs: false,
                 })
                 .on_conflict_do_nothing()
                 .execute(&c).with_expected_err(|| "Unable to insert following")?;

@@ -274,7 +274,7 @@ impl<'r> rocket::response::Responder<'r, 'static> for OIDCAuthorizeRedirect {
 #[get("/oidc/redirect?<code>&<state>")]
 pub async fn oidc_redirect(
     cookies: &CookieJar<'_>, oidc_app: &rocket::State<OIDCApplication>,
-    code: String, state: &str, db: crate::DbConn,
+    code: String, state: &str, db: crate::DbConn, lang: crate::i18n::Languages,
 ) -> Result<Redirect, rocket::http::Status> {
     let state_txt = match cookies.get_private("oidc_auth_state") {
         Some(t) => t,
@@ -349,7 +349,7 @@ pub async fn oidc_redirect(
             .finish()
     );
 
-    super::accounts::init_account(db, &id_claims).await?;
+    super::accounts::init_account(db, &id_claims, &lang).await?;
 
     Ok(Redirect::temporary(state_obj.return_uri))
 }

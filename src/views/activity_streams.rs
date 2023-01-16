@@ -216,10 +216,32 @@ impl Object {
                 {
                     "toot": "http://joinmastodon.org/ns#",
                     "schema": "http://schema.org#",
+                    "sensitive": "as:sensitive",
                     "manuallyApprovesFollowers": "as:manuallyApprovesFollowers",
                     "PropertyValue": "schema:PropertyValue",
                     "value": "schema:value",
-                    "discoverable": "toot:discoverable"
+                    "discoverable": "toot:discoverable",
+                    "focalPoint": {
+                        "@container": "@list",
+                        "@id": "toot:focalPoint"
+                    },
+                    "featured": {
+                        "@id": "toot:featured",
+                        "@type": "@id"
+                    },
+                    "featuredTags": {
+                        "@id": "toot:featuredTags",
+                        "@type": "@id"
+                    },
+                    "alsoKnownAs": {
+                        "@id": "as:alsoKnownAs",
+                        "@type": "@id"
+                    },
+                    "movedTo": {
+                        "@id": "as:movedTo",
+                        "@type": "@id"
+                    },
+                    "blurhash": "toot:blurhash",
                 }
             ]));
         }
@@ -355,7 +377,7 @@ impl<'r> rocket::data::FromData<'r> for Object {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ObjectOrLink {
     Object(Object),
@@ -367,6 +389,28 @@ impl ObjectID for ObjectOrLink {
         match self {
             ObjectOrLink::Object(o) => o.id(),
             ObjectOrLink::Link(l) => l.id(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ObjectOrLink {
+    fn deserialize<D: serde::de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+
+        match &value {
+            serde_json::Value::Object(o) => {
+                match o.get_key_value("type") {
+                    Some((_, serde_json::Value::String(s))) => {
+                        if s == "Link" {
+                            serde_json::from_value(value).map(ObjectOrLink::Link).map_err(serde::de::Error::custom)
+                        } else {
+                            serde_json::from_value(value).map(ObjectOrLink::Object).map_err(serde::de::Error::custom)
+                        }
+                    },
+                    _ => Err(serde::de::Error::missing_field("type"))
+                }
+            }
+            _ => Err(serde::de::Error::invalid_type(serde::de::Unexpected::Other("not an object"), &"object")),
         }
     }
 }
@@ -657,7 +701,6 @@ pub struct Endpoints {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
 pub struct Link {
     #[serde(rename = "href", default, skip_serializing_if = "Option::is_none")]
     pub href: Option<String>,
@@ -677,8 +720,6 @@ pub struct Link {
     pub width: Option<u64>,
     #[serde(rename = "preview", default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<ReferenceOrObject<ObjectOrLink>>,
-    #[serde(rename = "type", skip_serializing)]
-    pub _type: String,
 }
 
 impl ObjectID for Link {

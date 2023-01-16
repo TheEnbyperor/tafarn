@@ -66,6 +66,13 @@ async-recursion = "1.0.0"
 sanitize_html = "0.7"
 comrak = "0.15"
 bytes = "1"
+fluent = "0.16"
+fluent-bundle = "0.15"
+i18n-embed = { version = "0.13.8", features = ["fluent-system"] }
+i18n-embed-fl = "0.6.5"
+rust-embed = "6"
+unic-langid = "0.9"
+accept-language = "2"
 
 [profile.release]
 strip = true

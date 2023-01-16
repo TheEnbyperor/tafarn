@@ -1,0 +1,10 @@
+CREATE TABLE status_mentions (
+  id UUID PRIMARY KEY,
+  status UUID NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  account UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE tags (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);

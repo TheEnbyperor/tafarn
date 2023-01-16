@@ -366,7 +366,7 @@ pub async fn _create_status(
 
     let account = super::accounts::get_account(&db, &user).await?;
     let status_source = form.status.unwrap_or("");
-    let status_text = comrak::markdown_to_html(status_source, &crate::COMRAK_OPTIONS);
+    let status_text = comrak::markdown_to_html(status_source, &crate::COMRAK_OPTIONS).trim().to_string();
     let language = form.language.or(account.default_language.as_deref())
         .map(|x| x.to_string());
     let in_reply_to = match form.in_reply_to_id {

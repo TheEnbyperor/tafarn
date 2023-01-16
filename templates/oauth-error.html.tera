@@ -1,6 +1,6 @@
 {% extends "base" %}
 {% block content %}
-    <h2>Invalid request</h2>
+    <h2>{{ fl(id="invalid-request", lang=lang) }}</h2>
 
     <div class="alert alert-danger">
         {{ message }}

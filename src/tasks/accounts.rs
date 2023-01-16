@@ -459,7 +459,9 @@ pub async fn update_account_relations(
                                 follower: follower_account.id,
                                 followee: account.id,
                                 created_at: Utc::now().naive_utc(),
-                                pending: false
+                                pending: false,
+                                reblogs: false,
+                                notify: false,
                             })
                             .on_conflict_do_nothing()
                             .execute(&con).with_expected_err(|| "Unable to insert following")?;
@@ -476,7 +478,9 @@ pub async fn update_account_relations(
                                 follower: account.id,
                                 followee: followed_account.id,
                                 created_at: Utc::now().naive_utc(),
-                                pending: false
+                                pending: false,
+                                reblogs: false,
+                                notify: false,
                             })
                             .on_conflict_do_nothing()
                             .execute(&con).with_expected_err(|| "Unable to insert following")?;

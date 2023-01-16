@@ -1,10 +1,6 @@
 use diesel::prelude::*;
 use chrono::prelude::*;
 
-lazy_static! {
-    static ref WEBFINGER_RE: regex::Regex = regex::Regex::new("@?(?P<acct>.+@(?P<domain>.+))").unwrap();
-}
-
 #[get("/api/v2/search?<q>&<limit>&<offset>&<resolve>&<following>&<type>")]
 pub async fn search(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
@@ -25,7 +21,7 @@ pub async fn search(
 
         if let Some((domain, q)) = if let Ok(url) = url::Url::parse(&q) {
             url.domain().map(|d| (d.to_string(), url.to_string()))
-        } else if let Some(cap) = WEBFINGER_RE.captures(&q) {
+        } else if let Some(cap) = crate::WEBFINGER_RE.captures(&q) {
             Some((
                      cap.name("domain").unwrap().as_str().to_string(),
                      cap.name("acct").unwrap().as_str().to_string()

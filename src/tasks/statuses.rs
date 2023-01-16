@@ -4,6 +4,7 @@ use celery::prelude::*;
 use crate::models;
 use crate::tasks::{fetch_object, resolve_object, resolve_object_or_link, resolve_url};
 use crate::views::activity_streams::{self, ObjectID};
+use futures::StreamExt;
 
 pub async fn get_status(status: activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>) -> TaskResult<models::Status> {
     let config = super::config();
@@ -161,7 +162,7 @@ fn image_format_to_content_type(format: image::ImageFormat) -> &'static str {
 struct Attachment {
     remote_url: String,
     file_name: String,
-    format: AttachmentFormat
+    format: AttachmentFormat,
 }
 
 #[non_exhaustive]
@@ -212,9 +213,9 @@ async fn _download_object(obj: &activity_streams::ObjectOrLink) -> Option<Attach
                                     Some(Attachment {
                                         remote_url: url.to_string(),
                                         file_name: doc_name,
-                                        format: AttachmentFormat::Image(format)
+                                        format: AttachmentFormat::Image(format),
                                     })
-                                },
+                                }
                                 Err(e) => {
                                     error!("Unable to write attachment file: {}", e);
                                     None
@@ -236,12 +237,15 @@ async fn _download_object(obj: &activity_streams::ObjectOrLink) -> Option<Attach
                     None
                 }
             }
-        },
+        }
         _ => None
     }
 }
 
 async fn fetch_attachment(attachment: activity_streams::ReferenceOrObject<activity_streams::ObjectOrLink>) -> Option<models::Media> {
+    let config = super::config();
+    let db = config.db.clone();
+
     let attachment = resolve_object(attachment).await?;
     let f = _download_object(&attachment).await?;
     if let activity_streams::ObjectOrLink::Object(activity_streams::Object::Document(doc)) |
@@ -291,8 +295,15 @@ async fn fetch_attachment(attachment: activity_streams::ReferenceOrObject<activi
             preview_height: None,
             created_at: doc.published.unwrap_or_else(Utc::now).naive_utc(),
             description: doc.summary,
-            owned_by: None
+            owned_by: None,
         };
+
+        tokio::task::block_in_place(|| -> TaskResult<_> {
+            let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            diesel::insert_into(crate::schema::media::dsl::media)
+                .values(&new_media)
+                .execute(&c).with_expected_err(|| "Unable to insert media")
+        }).ok()?;
 
         Some(new_media)
     } else {
@@ -340,6 +351,12 @@ async fn _update_status(
                 None => None,
             };
 
+            let tags = futures::stream::iter(o.tag.to_vec())
+                .filter_map(|t| resolve_object_or_link(t))
+                .collect::<Vec<_>>().await;
+
+            println!("{:?}", tags);
+
             let summary = o.summary.as_deref()
                 .map(|s| {
                     sanitize_html::sanitize_str(&crate::HTML_RULES, s)
@@ -363,6 +380,24 @@ async fn _update_status(
                     }
                 }
             };
+            let created_at = o.published.unwrap_or_else(|| Utc::now());
+
+            let mut mentions = vec![];
+            for t in &tags {
+                if let activity_streams::Object::Mention(m) = t {
+                    if let Some(acct_actor) = &m.href {
+                        if let Some(a) = super::accounts::find_account(
+                            activity_streams::ReferenceOrObject::Reference(acct_actor.clone()), true
+                        ).await? {
+                            mentions.push(models::StatusMention {
+                                id: uuid::Uuid::new_v4(),
+                                status: status_id,
+                                account: a.id
+                            })
+                        }
+                    }
+                }
+            }
 
             let new_status = match status {
                 Some(mut existing_status) => {
@@ -407,7 +442,7 @@ async fn _update_status(
                         url: id.to_string(),
                         uri: o.url.clone().and_then(resolve_url),
                         text: content.unwrap_or_default(),
-                        created_at: o.published.unwrap_or_else(|| Utc::now()).naive_utc(),
+                        created_at: created_at.naive_utc(),
                         updated_at: o.updated.or(o.published).unwrap_or_else(|| Utc::now()).naive_utc(),
                         in_reply_to_url: if in_reply_to.is_some() {
                             None
@@ -464,20 +499,113 @@ async fn _update_status(
                     diesel::insert_into(crate::schema::status_audiences::table)
                         .values(&audiences.audiences)
                         .execute(&c)?;
+
+                    diesel::delete(crate::schema::status_mentions::table.filter(
+                        crate::schema::status_mentions::dsl::status.eq(new_status.id)
+                    )).execute(&c)?;
+
+                    diesel::insert_into(crate::schema::status_mentions::table)
+                        .values(&mentions)
+                        .execute(&c)?;
                     Ok(())
-                }).with_expected_err(|| "Unable to update status audiences")
+                }).with_expected_err(|| "Unable to update status audiences and mentions")
             })?;
 
             if is_new_status {
                 config.celery.send_task(
-                    insert_into_timelines::new(new_status.clone(), audiences.audiences)
+                    insert_into_timelines::new(new_status.clone(), audiences.audiences.clone())
                 ).await.with_expected_err(|| "Unable to send task")?;
-            }
+                if let Some(replies) = o.replies {
+                    config.celery.send_task(get_replies::new(replies))
+                        .await.with_expected_err(|| "Unable to send task")?;
+                }
 
+                for aud in &audiences.audiences {
+                    if aud.mention {
+                        if let Some(account_id) = aud.account {
+                            let notification = tokio::task::block_in_place(|| -> TaskResult<_> {
+                                let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                                diesel::insert_into(crate::schema::notifications::dsl::notifications)
+                                    .values(models::NewNotification {
+                                        id: uuid::Uuid::new_v4(),
+                                        notification_type: "mention".to_string(),
+                                        account: account_id,
+                                        cause: account.id,
+                                        status: Some(new_status.id),
+                                        created_at: created_at.naive_utc(),
+                                    })
+                                    .on_conflict_do_nothing()
+                                    .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert notification")
+                            })?;
+                            config.celery.send_task(super::notifications::notify::new(notification))
+                                .await.with_expected_err(|| "Unable to submit notification task")?;
+                        }
+                    }
+                }
+
+                for mention in &mentions {
+                    let notification = tokio::task::block_in_place(|| -> TaskResult<_> {
+                        let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                        diesel::insert_into(crate::schema::notifications::dsl::notifications)
+                            .values(models::NewNotification {
+                                id: uuid::Uuid::new_v4(),
+                                notification_type: "mention".to_string(),
+                                account: mention.account,
+                                cause: account.id,
+                                status: Some(new_status.id),
+                                created_at: created_at.naive_utc(),
+                            })
+                            .on_conflict_do_nothing()
+                            .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert notification")
+                    })?;
+                    config.celery.send_task(super::notifications::notify::new(notification))
+                        .await.with_expected_err(|| "Unable to submit notification task")?;
+                }
+            }
             Ok(new_status)
         }
         o => Err(TaskError::UnexpectedError(format!("Invalid object, not an status: {:?}", o)))
     }
+}
+
+#[celery::task]
+pub async fn get_replies(
+    collection: activity_streams::ReferenceOrObject<activity_streams::Collection>
+) -> TaskResult<()> {
+    let config = super::config();
+    let db = config.db.clone();
+    let collection = match resolve_object(collection).await {
+        Some(c) => c,
+        None => {
+            warn!("Unable to resolve replies collection");
+            return Ok(());
+        }
+    };
+    let mut cs = super::collection::fetch_entire_collection(activity_streams::Object::Collection(collection))?;
+
+    while let Some(reply) = cs.next().await {
+        let id = match reply.id() {
+            Some(id) => id,
+            None => continue,
+        };
+
+        let is_new_status = tokio::task::block_in_place(|| -> TaskResult<_> {
+            let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+            crate::schema::statuses::dsl::statuses.filter(
+                crate::schema::statuses::dsl::url.eq(id)
+            ).count().get_result::<i64>(&c).with_expected_err(|| "Unable to fetch status")
+        })? == 0;
+
+        if is_new_status {
+            let obj = match resolve_object_or_link(reply).await {
+                Some(o) => o,
+                None => return Ok(())
+            };
+            _update_status(obj, None, true).await?;
+        }
+    }
+
+    Ok(())
 }
 
 #[celery::task]
@@ -489,7 +617,7 @@ pub async fn create_status(
         None => return Ok(())
     };
 
-    _update_status(obj, Some(account), false).await?;
+    _update_status(obj, Some(account), true).await?;
     Ok(())
 }
 
@@ -529,6 +657,7 @@ pub async fn create_announce(
             None
         }
     };
+    let created_at = activity.common.published.unwrap_or_else(|| Utc::now());
 
     let new_status = match status {
         Some(mut existing_status) => {
@@ -548,7 +677,7 @@ pub async fn create_announce(
                 .unwrap_or(existing_status.updated_at);
             existing_status.public = audiences.to_public;
             existing_status.visible = audiences.to_public || audiences.cc_public;
-            if let Some(obj) = boost_of {
+            if let Some(obj) = &boost_of {
                 existing_status.boost_of_id = Some(obj.id);
                 existing_status.boost_of_url = None;
             }
@@ -568,12 +697,12 @@ pub async fn create_announce(
                 url: id.to_string(),
                 uri: None,
                 text: "".to_string(),
-                created_at: activity.common.published.unwrap_or_else(|| Utc::now()).naive_utc(),
+                created_at: created_at.naive_utc(),
                 updated_at: activity.common.updated.or(activity.common.published).unwrap_or_else(|| Utc::now()).naive_utc(),
                 in_reply_to_id: None,
                 in_reply_to_url: None,
                 boost_of_url: if boost_of.is_some() { None } else { Some(boost_of_id) },
-                boost_of_id: boost_of.map(|s| s.id),
+                boost_of_id: boost_of.as_ref().map(|s| s.id),
                 sensitive: false,
                 spoiler_text: "".to_string(),
                 language: None,
@@ -614,6 +743,27 @@ pub async fn create_announce(
         config.celery.send_task(
             insert_into_timelines::new(new_status.clone(), audiences.audiences)
         ).await.with_expected_err(|| "Unable to send task")?;
+
+        if let Some(boost_of) = &boost_of {
+            if boost_of.local {
+                let notification = tokio::task::block_in_place(|| -> TaskResult<_> {
+                    let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                    diesel::insert_into(crate::schema::notifications::dsl::notifications)
+                        .values(models::NewNotification {
+                            id: uuid::Uuid::new_v4(),
+                            notification_type: "reblog".to_string(),
+                            account: boost_of.account_id,
+                            cause: account.id,
+                            status: Some(boost_of.id),
+                            created_at: created_at.naive_utc(),
+                        })
+                        .on_conflict_do_nothing()
+                        .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert notification")
+                })?;
+                config.celery.send_task(super::notifications::notify::new(notification))
+                    .await.with_expected_err(|| "Unable to submit notification task")?;
+            }
+        }
     }
 
     Ok(())
@@ -652,6 +802,7 @@ pub async fn create_like(
             }
         };
 
+        let created_at = activity.common.published.unwrap_or_else(|| Utc::now());
         let new_like = models::NewLike {
             id: uuid::Uuid::new_v4(),
             account: account.id,
@@ -659,7 +810,7 @@ pub async fn create_like(
             status_url: if like_of.is_none() { Some(like_of_id) } else { None },
             local: false,
             url: Some(id.to_string()),
-            created_at: activity.common.published.unwrap_or_else(|| Utc::now()).naive_utc(),
+            created_at: created_at.naive_utc(),
         };
         tokio::task::block_in_place(|| -> TaskResult<_> {
             let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
@@ -667,6 +818,26 @@ pub async fn create_like(
                 .values(&new_like)
                 .execute(&c).with_expected_err(|| "Unable to insert like")
         })?;
+        if let Some(like_of) = like_of {
+            if like_of.local {
+                let notification = tokio::task::block_in_place(|| -> TaskResult<_> {
+                    let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                    diesel::insert_into(crate::schema::notifications::dsl::notifications)
+                        .values(models::NewNotification {
+                            id: uuid::Uuid::new_v4(),
+                            notification_type: "favourite".to_string(),
+                            account: like_of.account_id,
+                            cause: account.id,
+                            status: Some(like_of.id),
+                            created_at: created_at.naive_utc(),
+                        })
+                        .on_conflict_do_nothing()
+                        .get_result::<models::Notification>(&c).with_expected_err(|| "Unable to insert notification")
+                })?;
+                config.celery.send_task(super::notifications::notify::new(notification))
+                    .await.with_expected_err(|| "Unable to submit notification task")?;
+            }
+        }
     }
 
     Ok(())
@@ -805,9 +976,13 @@ pub async fn insert_into_timelines(
         } else if let Some(acct) = aud.account_followers {
             let followers = tokio::task::block_in_place(|| -> TaskResult<_> {
                 let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-                crate::schema::following::dsl::following.filter(
+                let mut q = crate::schema::following::dsl::following.filter(
                     crate::schema::following::dsl::followee.eq(acct)
-                ).get_results::<models::Following>(&c).with_expected_err(|| "Unable to fetch followers")
+                ).into_boxed();
+                if status.boost_of_id.is_some() {
+                    q = q.filter(crate::schema::following::dsl::reblogs.eq(true));
+                }
+                q.get_results::<models::Following>(&c).with_expected_err(|| "Unable to fetch followers")
             })?;
             for follower in followers {
                 tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -917,7 +1092,7 @@ pub async fn make_audiences(status: &models::Status, resolve_delivery: bool) -> 
 }
 
 pub fn as_render_status(
-    status: &models::Status, account: &models::Account, aud: &ASAudiences
+    status: &models::Status, account: &models::Account, aud: &ASAudiences,
 ) -> TaskResult<activity_streams::Object> {
     let config = super::config();
     let db = config.db.clone();
@@ -929,8 +1104,8 @@ pub fn as_render_status(
                 ..Default::default()
             },
             former_type: Some("Note".to_string()),
-            deleted: Some(Utc.from_utc_datetime(deleted_at))
-        }))
+            deleted: Some(Utc.from_utc_datetime(deleted_at)),
+        }));
     }
 
     let attachments: Vec<(models::MediaAttachment, models::Media)> = tokio::task::block_in_place(|| -> TaskResult<_> {
@@ -1001,7 +1176,7 @@ pub fn as_render_status(
 }
 
 pub fn as_render_status_activity(
-    status: &models::Status, account: &models::Account, aud: &ASAudiences
+    status: &models::Status, account: &models::Account, aud: &ASAudiences,
 ) -> TaskResult<activity_streams::Object> {
     let config = super::config();
 
@@ -1015,7 +1190,7 @@ pub fn as_render_status_activity(
         },
         actor: Some(activity_streams::ReferenceOrObject::Reference(account.actor_id(&config.uri))),
         object: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
-           as_render_status(status, account, aud)?
+            as_render_status(status, account, aud)?
         )))),
         target: None,
         result: None,
@@ -1071,7 +1246,7 @@ pub async fn deliver_status_delete(
 }
 
 pub fn as_render_boost(
-    status: &models::Status, boosted_status: &models::Status, account: &models::Account, aud: &ASAudiences
+    status: &models::Status, boosted_status: &models::Status, account: &models::Account, aud: &ASAudiences,
 ) -> activity_streams::Object {
     let config = super::config();
 
@@ -1185,7 +1360,7 @@ pub async fn make_like_audiences(like: &models::Like, liked_status: &models::Sta
 }
 
 pub async fn as_render_like(
-    like: &models::Like, liked_status: &models::Status, account: &models::Account, aud: &ASAudiences
+    like: &models::Like, liked_status: &models::Status, account: &models::Account, aud: &ASAudiences,
 ) -> TaskResult<activity_streams::Object> {
     let config = super::config();
 

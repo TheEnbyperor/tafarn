@@ -2,6 +2,8 @@ use diesel::prelude::*;
 use chrono::prelude::*;
 use rocket::futures;
 use futures::StreamExt;
+use crate::models;
+use crate::views::parse_bool;
 
 pub async fn get_account(db: &crate::DbConn, user: &super::oauth::TokenClaims) -> Result<crate::models::Account, rocket::http::Status> {
     let sub = user.subject.clone();
@@ -12,7 +14,9 @@ pub async fn get_account(db: &crate::DbConn, user: &super::oauth::TokenClaims) -
     }).await
 }
 
-pub async fn init_account(db: crate::DbConn, user: &super::oidc::OIDCIdTokenClaims) -> Result<(), rocket::http::Status> {
+pub async fn init_account(
+    db: crate::DbConn, user: &super::oidc::OIDCIdTokenClaims, langs: &crate::i18n::Languages
+) -> Result<(), rocket::http::Status> {
     let sub = user.subject().to_string();
     let account = crate::db_run(&db, move |c| -> QueryResult<_> {
         Ok(crate::schema::accounts::dsl::accounts.filter(
@@ -68,7 +72,7 @@ pub async fn init_account(db: crate::DbConn, user: &super::oidc::OIDCIdTokenClai
             display_name: user.name().and_then(|n| n.get(None)).map(|n| n.to_string())
                 .unwrap_or_else(|| username.clone()),
             default_sensitive: Some(false),
-            default_language: Some("en".to_string()),
+            default_language: langs.0.first().map(|l| l.language.as_str().to_string()),
             discoverable: Some(true),
             follower_count: 0,
             following_count: 0,
@@ -646,7 +650,7 @@ async fn render_relationship<'a>(
             ).and(
                 crate::schema::following::dsl::pending.eq(false)
             )
-        ).count().get_result::<i64>(c)
+        ).get_result::<models::Following>(c).optional()
     }).await?;
     let following_pending = crate::db_run(db, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
@@ -676,7 +680,7 @@ async fn render_relationship<'a>(
 
     Ok(super::objs::Relationship {
         id: other_account.iid.to_string(),
-        following: following > 0,
+        following: following.is_some(),
         followed_by: followed_by > 0,
         blocking: false,
         blocked_by: false,
@@ -684,8 +688,8 @@ async fn render_relationship<'a>(
         muting_notifications: false,
         requested: following_pending > 0,
         domain_blocking: false,
-        showing_reblogs: true,
-        notifying: false,
+        showing_reblogs: following.as_ref().map(|f| f.reblogs).unwrap_or(false),
+        notifying: following.as_ref().map(|f| f.notify).unwrap_or(false),
         endorsed: false,
         languages: vec![],
         note: note.map(|n| n.note),
@@ -788,15 +792,18 @@ pub struct FollowAccountForm<'a> {
     language: Option<Vec<&'a str>>
 }
 
-#[post("/api/v1/accounts/<account_id>/follow", data = "<_form>")]
+#[post("/api/v1/accounts/<account_id>/follow", data = "<form>")]
 pub async fn follow_account(
     db: crate::DbConn, user: super::oauth::TokenClaims, account_id: String,
     celery: &rocket::State<crate::CeleryApp>,
-    _form: Option<rocket::form::Form<FollowAccountForm<'_>>>
+    form: Option<rocket::form::Form<FollowAccountForm<'_>>>
 ) -> Result<rocket::serde::json::Json<super::objs::Relationship>, rocket::http::Status> {
     if !user.has_scope("write:follows") {
         return Err(rocket::http::Status::Forbidden);
     }
+
+    let reblogs = parse_bool(form.as_ref().and_then(|f| f.reblogs), true)?;
+    let notify = parse_bool(form.as_ref().and_then(|f| f.notify), false)?;
 
     let account = get_account(&db, &user).await?;
     let followed_account = get_account_from_db(&account_id, &db).await?;
@@ -808,6 +815,16 @@ pub async fn follow_account(
             )
         ).count().get_result::<i64>(c)
     }).await? > 0 {
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            diesel::update(crate::schema::following::table).filter(
+                crate::schema::following::dsl::follower.eq(&account.id).and(
+                crate::schema::following::dsl::followee.eq(&followed_account.id))
+            ).set((
+                crate::schema::following::dsl::reblogs.eq(reblogs),
+                crate::schema::following::dsl::notify.eq(notify),
+            )).execute(c)
+        }).await?;
+
         return render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account))
             .await.map(rocket::serde::json::Json);
     }
@@ -822,12 +839,14 @@ pub async fn follow_account(
 
     crate::db_run(&db, move |c| -> QueryResult<_> {
         diesel::insert_into(crate::schema::following::dsl::following).values(
-            crate::models::NewFollowing {
+            models::NewFollowing {
                 id: following_id.clone(),
                 follower: account.id,
                 followee: followed_account.id,
                 created_at: created.naive_utc(),
-                pending: true
+                pending: true,
+                reblogs,
+                notify
             }
         ).execute(c)
     }).await?;
@@ -951,4 +970,44 @@ pub async fn note(
     let relationship = render_relationship(&db, &account, std::borrow::Cow::Borrowed(&note_account)).await?;
 
     Ok(rocket::serde::json::Json(relationship))
+}
+
+
+#[get("/api/v1/accounts/lookup?<acct>")]
+pub async fn lookup_account(
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, acct: String
+) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
+    let acct = if let Some(cap) = crate::WEBFINGER_RE.captures(&acct) {
+        let domain = cap.name("domain").unwrap().as_str().to_string();
+        let acct = cap.name("user").unwrap().as_str().to_string();
+
+        let accts: Vec<models::Account> = crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::accounts::dsl::accounts.filter(
+                crate::schema::accounts::dsl::username.eq(acct)
+            ).filter(
+                crate::schema::accounts::dsl::local.eq(false)
+            ).get_results(c)
+        }).await?;
+
+        accts.into_iter().find(|acct| {
+            let d = acct.actor.as_deref().and_then(
+                |u| reqwest::Url::parse(u).ok()?.domain().map(|d| d.to_string())
+            );
+            if d.as_deref() == Some(&domain) {
+                true
+            } else {
+                false
+            }
+        }).ok_or(rocket::http::Status::NotFound)?
+    } else {
+        crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::schema::accounts::dsl::accounts.filter(
+                crate::schema::accounts::dsl::username.eq(acct)
+            ).filter(
+                crate::schema::accounts::dsl::local.eq(true)
+            ).get_result(c).optional()
+        }).await?.ok_or(rocket::http::Status::NotFound)?
+    };
+
+    render_account(config, &db, acct).await.map(rocket::serde::json::Json)
 }

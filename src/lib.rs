@@ -10,6 +10,8 @@ extern crate diesel;
 extern crate diesel_migrations;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate i18n_embed_fl;
 
 use rocket_sync_db_pools::database;
 use rocket_sync_db_pools::Poolable;
@@ -17,6 +19,7 @@ use celery::prelude::*;
 
 mod models;
 mod schema;
+pub mod i18n;
 pub mod views;
 pub mod csrf;
 pub mod tasks;
@@ -38,6 +41,10 @@ pub async fn db_run<
         }
     })
 }
+
+#[derive(rust_embed::RustEmbed)]
+#[folder = "i18n"]
+struct Localizations;
 
 lazy_static! {
     pub static ref AS_CLIENT: reqwest::Client = {
@@ -146,6 +153,17 @@ lazy_static! {
             ..Default::default()
         }
     };
+
+    pub static ref WEBFINGER_RE: regex::Regex = regex::Regex::new("@?(?P<acct>(?P<user>.+)@(?P<domain>.+))").unwrap();
+
+    pub static ref LANGUAGE_LOADER: i18n_embed::fluent::FluentLanguageLoader = {
+        use i18n_embed::LanguageLoader;
+
+        let l = i18n_embed::fluent::fluent_language_loader!();
+        l.load_available_languages(&crate::Localizations).unwrap();
+        l.set_use_isolating(true);
+        l
+    };
 }
 
 pub type CeleryApp = std::sync::Arc<celery::Celery<AMQPBroker>>;
@@ -241,10 +259,11 @@ pub async fn setup() -> App {
             tasks::statuses::deliver_undo_boost,
             tasks::statuses::deliver_like,
             tasks::statuses::deliver_undo_like,
+            tasks::statuses::get_replies,
         ],
         task_routes = [],
-        prefetch_count = 2,
-        acks_late = true,
+        prefetch_count = 0,
+        acks_late = false,
         task_max_retries = 25,
         task_min_retry_delay = 30,
         task_retry_for_unexpected = false,

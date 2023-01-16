@@ -1,26 +1,25 @@
 {% extends "base" %}
 {% block content %}
-    <h2>Login to {{ name }}</h2>
+    <h2>{{ fl(id="oauth-login-to", lang=lang, name=name) }}</h2>
     <p>
-        Website: <a href="{{ website }}">{{ website }}</a>
+        {{ fl(id="website", lang=lang) }}: <a href="{{ website }}">{{ website }}</a>
     </p>
 
     <p>
-        {{ name }} would like to authenticate with your account.
-        It has requested the following permissions:
+        {{ fl(id="oauth-consent", lang=lang, name=name) }}
     </p>
 
     <ul>
         {% for scope in scopes %}
-            <li>{{ scope.description }}</li>
+            <li>{{ fl(id=scope.description, lang=lang) }}</li>
         {% endfor %}
     </ul>
 
     <form action="/oauth/consent" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="btn-group d-flex">
-            <button class="btn btn-success w-100" type="submit" name="consent" value="yes">Consent</button>
-            <button class="btn btn-danger w-100" type="submit" name="consent" value="no">Reject</button>
+            <button class="btn btn-success w-100" type="submit" name="consent" value="yes">{{ fl(id="consent", lang=lang) }}</button>
+            <button class="btn btn-danger w-100" type="submit" name="consent" value="no">{{ fl(id="reject", lang=lang) }}</button>
         </div>
     </form>
 {% endblock %}

@@ -222,6 +222,8 @@ pub struct Following {
     pub followee: uuid::Uuid,
     pub created_at: chrono::NaiveDateTime,
     pub pending: bool,
+    pub notify: bool,
+    pub reblogs: bool,
 }
 
 #[derive(Insertable, Clone, Debug)]
@@ -232,6 +234,8 @@ pub struct NewFollowing {
     pub followee: uuid::Uuid,
     pub created_at: chrono::NaiveDateTime,
     pub pending: bool,
+    pub notify: bool,
+    pub reblogs: bool,
 }
 
 #[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
@@ -482,4 +486,19 @@ pub struct AccountNote {
 pub struct MediaAttachment {
     pub status: uuid::Uuid,
     pub media: uuid::Uuid,
+}
+
+#[derive(Insertable, Queryable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="status_mentions"]
+pub struct StatusMention {
+    pub id: uuid::Uuid,
+    pub status: uuid::Uuid,
+    pub account: uuid::Uuid,
+}
+
+#[derive(Insertable, Queryable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
+#[table_name="tags"]
+pub struct Tag {
+    pub id: uuid::Uuid,
+    pub name: String
 }

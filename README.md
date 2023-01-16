@@ -87,7 +87,7 @@ or `given_name` claim, if `preferred_username` is not available.
 - [x] GET /api/v1/accounts/relationships
 - [x] GET /api/v1/accounts/familiar_followers
 - [ ] GET /api/v1/accounts/search
-- [ ] GET /api/v1/accounts/lookup
+- [x] GET /api/v1/accounts/lookup
 - [ ] GET /api/v1/accounts/:id/identity_proofs (likely never to be implemented)
 
 ### bookmarks

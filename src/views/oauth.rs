@@ -148,115 +148,115 @@ struct APIScope {
 
 const API_SCOPES: phf::Map<&'static str, APIScope> = phf::phf_map! {
     "read" => APIScope {
-        description: "Full read access to your account",
+        description: "scope-read",
         parent: &[]
     },
     "read:accounts" => APIScope {
-        description: "Read access basic account information",
+        description: "scope-read-accounts",
         parent: &["read"]
     },
     "read:blocks" => APIScope {
-        description: "View your blocks",
+        description: "scope-read-blocks",
         parent: &["read", "follow"]
     },
     "read:bookmarks" => APIScope {
-        description: "View your bookmarks",
+        description: "scope-read-bookmarks",
         parent: &["read"]
     },
-     "read:favourites" => APIScope {
-        description: "View your likes",
+    "read:favourites" => APIScope {
+        description: "scope-read-favourites",
         parent: &["read"]
     },
     "read:filters" => APIScope {
-        description: "View your filters",
+        description: "scope-read-filters",
         parent: &["read"]
     },
-     "read:follows" => APIScope {
-        description: "View your follows",
+    "read:follows" => APIScope {
+        description: "scope-read-follows",
         parent: &["read", "follow"]
     },
     "read:lists" => APIScope {
-        description: "View your lists",
+        description: "scope-read-lists",
         parent: &["read"]
     },
     "read:mutes" => APIScope {
-        description: "View your mutes",
+        description: "scope-read-mutes",
         parent: &["read", "follow"]
     },
     "read:notifications" => APIScope {
-        description: "View your notifications",
+        description: "scope-read-notifications",
         parent: &["read"]
     },
     "read:search" => APIScope {
-        description: "Perform searches as you",
+        description: "scope-read-search",
         parent: &["read"]
     },
     "read:statuses" => APIScope {
-        description: "View your statuses",
+        description: "scope-read-statuses",
         parent: &["read"]
     },
     "write" => APIScope {
-        description: "Full write access to your account",
+        description: "scope-write",
         parent: &[]
     },
     "write:accounts" => APIScope {
-        description: "Manage your account information",
+        description: "scope-write-accounts",
         parent: &["write"]
     },
     "write:blocks" => APIScope {
-        description: "Manage your blocks",
+        description: "scope-write-blocks",
         parent: &["write", "follow"]
     },
     "write:bookmarks" => APIScope {
-        description: "Manage your bookmarks",
+        description: "scope-write-bookmarks",
         parent: &["write"]
     },
     "write:conversations" => APIScope {
-        description: "Manage direct messages",
+        description: "scope-write-conversations",
         parent: &["write"]
     },
     "write:favourites" => APIScope {
-        description: "Manage your likes",
+        description: "scope-write-favourites",
         parent: &["write"]
     },
     "write:filters" => APIScope {
-        description: "Manage your filters",
+        description: "scope-write-filters",
         parent:  &["write"]
     },
     "write:follows" => APIScope {
-        description: "Manage your follows",
+        description: "scope-write-follows",
         parent: &["write", "follow"]
     },
     "write:lists" => APIScope {
-        description: "Manage your lists",
+        description: "scope-write-lists",
         parent:  &["write"]
     },
     "write:media" => APIScope {
-        description: "Upload media",
+        description: "scope-write-media",
         parent: &["write"]
     },
     "write:mutes" => APIScope {
-        description: "Manage your mutes",
+        description: "scope-write-mutes",
         parent: &["write", "follow"]
     },
     "write:notifications" => APIScope {
-        description: "Manage your notifications",
+        description: "scope-write-notifications",
         parent: &["write"]
     },
     "write:reports" => APIScope {
-        description: "Submit reports",
+        description: "scope-write-reports",
         parent: &["write"]
     },
     "write:statuses" => APIScope {
-        description: "Manage your statuses",
+        description: "scope-write-statuses",
         parent: &["write"]
     },
     "follow" => APIScope {
-        description: "Permission to manage relationships",
+        description: "scope-follow",
         parent: &[]
     },
     "push" => APIScope {
-        description: "Access to push notifications",
+        description: "scope-push",
         parent: &[]
     }
 };
@@ -390,11 +390,14 @@ pub async fn oauth_authorize(
     redirect_uri: &str, scope: Option<&str>, force_login: Option<&str>, state: Option<&str>,
     oidc_app: &rocket::State<super::oidc::OIDCApplication>, oidc_user: Option<super::oidc::OIDCUser>,
     origin: &rocket::http::uri::Origin<'_>, csrf_token: crate::csrf::CSRFToken,
-    cookies: &rocket::http::CookieJar<'_>,
+    cookies: &rocket::http::CookieJar<'_>, localizer: crate::i18n::Localizer
 ) -> Result<OAuthAuthorizeResponse, rocket::http::Status> {
     let client_id = match uuid::Uuid::parse_str(client_id) {
         Ok(id) => id,
-        Err(_) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! { message: "Client not found" })))
+        Err(_) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "client-not-found"),
+            lang: localizer
+        })))
     };
 
     let (app, app_scopes) = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
@@ -406,17 +409,26 @@ pub async fn oauth_authorize(
         ))
     }).await? {
         (Some(a), s) => (a, s),
-        (None, _) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! { message: "Client not found" }))),
+        (None, _) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "client-not-found"),
+            lang: localizer
+        }))),
     };
 
     let c_redirect_uri = redirect_uri.to_string();
     let mut redirect_uri = match url::Url::parse(redirect_uri) {
         Ok(u) => u,
-        Err(_) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! { message: "Invalid redirect URI" })))
+        Err(_) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-redirect-uri"),
+            lang: localizer
+        })))
     };
 
     if redirect_uri != url::Url::parse(&app.redirect_uri).unwrap() {
-        return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! { message: "Invalid redirect URI" })));
+        return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-redirect-uri"),
+            lang: localizer
+        })));
     }
 
     if let Some(state) = state {
@@ -512,7 +524,8 @@ pub async fn oauth_authorize(
                 name: app.name,
                 website: app.website,
                 scopes: scopes.into_iter().filter_map(|s| API_SCOPES.get(&s)).collect::<Vec<_>>(),
-                csrf_token: csrf_token.to_string()
+                csrf_token: csrf_token.to_string(),
+                lang: localizer
             })))
         } else {
             return Ok(match crate::db_run(&db, move |c| -> QueryResult<_> {
@@ -570,18 +583,28 @@ pub struct OAuthConsentForm<'r> {
 pub async fn oauth_consent(
     db: crate::DbConn, oidc_user: super::oidc::OIDCUser, csrf_token: crate::csrf::CSRFToken,
     cookies: &rocket::http::CookieJar<'_>, form: rocket::form::Form<OAuthConsentForm<'_>>,
+    localizer: crate::i18n::Localizer,
 ) -> OAuthConsentResponse {
     if !csrf_token.verify(form.csrf_token) {
-        return OAuthConsentResponse::Template(Template::render("oauth-error", context! { message: "Invalid CSRF token" }));
+        return OAuthConsentResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-csrf-token"),
+            lang: localizer
+        }));
     }
 
     let state_txt = match cookies.get_private("oauth_consent") {
         Some(t) => t,
-        None => return OAuthConsentResponse::Template(Template::render("oauth-error", context! { message: "Invalid state" }))
+        None => return OAuthConsentResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-state"),
+            lang: localizer
+        }))
     };
     let mut state_obj: OAuthConsentState = match serde_json::from_str(state_txt.value()) {
         Ok(s) => s,
-        Err(_) => return OAuthConsentResponse::Template(Template::render("oauth-error", context! { message: "Invalid state" }))
+        Err(_) => return OAuthConsentResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-state"),
+            lang: localizer
+        }))
     };
     cookies.remove_private(state_txt);
 
@@ -623,7 +646,10 @@ pub async fn oauth_consent(
                 }
             }
         }
-        _ => OAuthConsentResponse::Template(Template::render("oauth-error", context! { message: "Invalid consent" }))
+        _ => OAuthConsentResponse::Template(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-consent"),
+            lang: localizer
+        }))
     }
 }
 

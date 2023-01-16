@@ -26,59 +26,128 @@ pub async fn notify(notification: models::Notification) -> TaskResult<()> {
     let config = super::config();
     let db = config.db.clone();
 
-    let account = tokio::task::block_in_place(|| -> TaskResult<_> {
+    let (account, cause, status, is_followed, is_following) = tokio::task::block_in_place(|| -> TaskResult<_> {
         let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-        crate::schema::accounts::dsl::accounts
+        let a = crate::schema::accounts::dsl::accounts
+            .filter(crate::schema::accounts::dsl::id.eq(notification.account))
+            .get_result::<models::Account>(&c).with_expected_err(|| "Unable to get account")?;
+        let ca = crate::schema::accounts::dsl::accounts
             .filter(crate::schema::accounts::dsl::id.eq(notification.cause))
-            .get_result::<models::Account>(&c).with_expected_err(|| "Unable to get account")
+            .get_result::<models::Account>(&c).with_expected_err(|| "Unable to get account")?;
+        let s = match notification.status {
+            Some(sid) => Some(crate::schema::statuses::dsl::statuses
+                .filter(crate::schema::statuses::dsl::id.eq(sid))
+                .get_result::<models::Status>(&c).with_expected_err(|| "Unable to get status")?),
+            None => None
+        };
+
+        let is_followed = crate::schema::following::dsl::following
+            .filter(crate::schema::following::dsl::follower.eq(notification.account))
+            .filter(crate::schema::following::dsl::followee.eq(notification.cause))
+            .count().get_result::<i64>(&c).with_expected_err(|| "Unable to check followed set")? > 0;
+        let is_following = crate::schema::following::dsl::following
+            .filter(crate::schema::following::dsl::followee.eq(notification.account))
+            .filter(crate::schema::following::dsl::follower.eq(notification.cause))
+            .count().get_result::<i64>(&c).with_expected_err(|| "Unable to check following set")? > 0;
+
+        Ok((a, ca, s, is_followed, is_following))
     })?;
 
-    let subscriptions: Vec<models::WebPushSubscription> = match notification.notification_type.as_str() {
+    let subscriptions = match notification.notification_type.as_str() {
         "follow" => {
-            let (subscriptions, is_followed) = tokio::task::block_in_place(|| -> TaskResult<_> {
+            tokio::task::block_in_place(|| -> TaskResult<_> {
                 let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
-
-                let is_followed = crate::schema::following::dsl::following
-                    .filter(crate::schema::following::dsl::follower.eq(notification.account))
-                    .filter(crate::schema::following::dsl::followee.eq(notification.cause))
-                    .count().get_result::<i64>(&c).with_expected_err(|| "Unable to check followed set")? > 0;
-
-                let subs = crate::schema::web_push_subscriptions::dsl::web_push_subscriptions
+                crate::schema::web_push_subscriptions::dsl::web_push_subscriptions
                     .filter(crate::schema::web_push_subscriptions::dsl::follow.eq(true))
                     .filter(crate::schema::web_push_subscriptions::dsl::account_id.eq(notification.account))
-                    .get_results::<models::WebPushSubscription>(&c).with_expected_err(|| "Unable to get subscriptions")?;
-
-                Ok((subs, is_followed))
-            })?;
-
-            subscriptions.into_iter().filter(|s| {
-                if s.policy == "all" || s.policy == "follower" {
-                    true
-                } else if s.policy == "followed" {
-                    is_followed
-                } else {
-                    false
-                }
-            }).collect()
-        },
+                    .get_results(&c).with_expected_err(|| "Unable to get subscriptions")
+            })?
+        }
+        "favourite" => {
+            tokio::task::block_in_place(|| -> TaskResult<_> {
+                let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                crate::schema::web_push_subscriptions::dsl::web_push_subscriptions
+                    .filter(crate::schema::web_push_subscriptions::dsl::favourite.eq(true))
+                    .filter(crate::schema::web_push_subscriptions::dsl::account_id.eq(notification.account))
+                    .get_results::<models::WebPushSubscription>(&c).with_expected_err(|| "Unable to get subscriptions")
+            })?
+        }
+        "reblog" => {
+            tokio::task::block_in_place(|| -> TaskResult<_> {
+                let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                crate::schema::web_push_subscriptions::dsl::web_push_subscriptions
+                    .filter(crate::schema::web_push_subscriptions::dsl::reblog.eq(true))
+                    .filter(crate::schema::web_push_subscriptions::dsl::account_id.eq(notification.account))
+                    .get_results::<models::WebPushSubscription>(&c).with_expected_err(|| "Unable to get subscriptions")
+            })?
+        }
+        "mention" => {
+            tokio::task::block_in_place(|| -> TaskResult<_> {
+                let c = db.get().with_expected_err(|| "Unable to get DB pool connection")?;
+                crate::schema::web_push_subscriptions::dsl::web_push_subscriptions
+                    .filter(crate::schema::web_push_subscriptions::dsl::mention.eq(true))
+                    .filter(crate::schema::web_push_subscriptions::dsl::account_id.eq(notification.account))
+                    .get_results::<models::WebPushSubscription>(&c).with_expected_err(|| "Unable to get subscriptions")
+            })?
+        }
         _ => {
             warn!("Unknown notification type: {}", notification.notification_type);
             return Ok(());
         }
-    };
+    }.into_iter().filter(|s| match s.policy.as_str() {
+        "all" => true,
+        "follower" => is_following,
+        "followed" => is_followed,
+        _ => false
+    }).collect::<Vec<models::WebPushSubscription>>();
+
+    let localizer = crate::i18n::Localizer::get_lang_opt(account.default_language.as_deref());
 
     let notification_data = match notification.notification_type.as_str() {
         "follow" => {
             NotificationData {
                 notification_id: notification.iid,
                 notification_type: "follow".to_string(),
-                title: format!("{} followed you", account.display_name),
-                icon: account.avatar_file.as_ref().map(|f| format!("https://{}/media/{}", config.uri, f)),
-                body: account.bio,
+                title: fl!(localizer, "follow-notification", name = account.display_name),
+                icon: cause.avatar_file.as_ref().map(|f| format!("https://{}/media/{}", config.uri, f)),
+                body: cause.bio,
                 access_token: "".to_string(),
-                preferred_locale: account.default_language.clone().unwrap_or_else(|| "en".to_string()),
+                preferred_locale: cause.default_language.clone().unwrap_or_else(|| "en".to_string()),
             }
         },
+        "favourite" => {
+            NotificationData {
+                notification_id: notification.iid,
+                notification_type: "favourite".to_string(),
+                title: fl!(localizer, "favourite-notification", name = account.display_name),
+                icon: cause.avatar_file.as_ref().map(|f| format!("https://{}/media/{}", config.uri, f)),
+                body: status.as_ref().map(|s| s.text.clone()).unwrap_or_else(|| "".to_string()),
+                access_token: "".to_string(),
+                preferred_locale: cause.default_language.clone().unwrap_or_else(|| "en".to_string()),
+            }
+        }
+        "reblog" => {
+            NotificationData {
+                notification_id: notification.iid,
+                notification_type: "reblog".to_string(),
+                title: fl!(localizer, "reblog-notification", name = account.display_name),
+                icon: cause.avatar_file.as_ref().map(|f| format!("https://{}/media/{}", config.uri, f)),
+                body: status.as_ref().map(|s| s.text.clone()).unwrap_or_else(|| "".to_string()),
+                access_token: "".to_string(),
+                preferred_locale: cause.default_language.clone().unwrap_or_else(|| "en".to_string()),
+            }
+        }
+        "mention" => {
+            NotificationData {
+                notification_id: notification.iid,
+                notification_type: "mention".to_string(),
+                title: fl!(localizer, "mention-notification", name = account.display_name),
+                icon: cause.avatar_file.as_ref().map(|f| format!("https://{}/media/{}", config.uri, f)),
+                body: status.as_ref().map(|s| s.text.clone()).unwrap_or_else(|| "".to_string()),
+                access_token: "".to_string(),
+                preferred_locale: cause.default_language.clone().unwrap_or_else(|| "en".to_string()),
+            }
+        }
         _ => unreachable!()
     };
 
@@ -124,7 +193,8 @@ pub async fn deliver_notification(notification: Notification, subscription_id: u
         return Ok(());
     }
 
-    if status == reqwest::StatusCode::GONE || status == reqwest::StatusCode::NOT_FOUND {
+    if status == reqwest::StatusCode::GONE || status == reqwest::StatusCode::NOT_FOUND
+        || status == reqwest::StatusCode::FORBIDDEN {
         info!("Removing invalid subscription {}", subscription_id);
         tokio::task::block_in_place(|| -> TaskResult<_> {
             let c = config.db.get().with_expected_err(|| "Unable to get DB pool connection")?;
@@ -132,6 +202,7 @@ pub async fn deliver_notification(notification: Notification, subscription_id: u
                 .filter(crate::schema::web_push_subscriptions::dsl::id.eq(subscription_id))
             ).execute(&c).with_expected_err(|| "Unable to delete subscription")
         })?;
+        return Ok(());
     }
 
     return Err(TaskError::ExpectedError(format!("Unable to send WebPushMessage: {}", status)));

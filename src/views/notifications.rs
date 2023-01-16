@@ -1,20 +1,30 @@
 use diesel::prelude::*;
 use chrono::prelude::*;
 use futures::StreamExt;
+use crate::models;
 
 pub async fn render_notification(
     db: &crate::DbConn, config: &crate::AppConfig, notification: crate::models::Notification
 ) -> Result<super::objs::Notification, rocket::http::Status> {
-    let account = crate::db_run(&db, move |c| -> QueryResult<_> {
-        crate::schema::accounts::dsl::accounts.find(notification.cause).get_result(c)
+    let (account, status) = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let a = crate::schema::accounts::dsl::accounts.find(notification.cause).get_result(c)?;
+        let s = notification.status
+            .map(|sid| crate::schema::statuses::dsl::statuses.find(sid)
+                .get_result::<models::Status>(c))
+            .transpose()?;
+
+        Ok((a, s))
     }).await?;
 
     Ok(super::objs::Notification {
         id: notification.iid.to_string(),
         notification_type: notification.notification_type,
         created_at: Utc.from_utc_datetime(&notification.created_at),
+        status: match status {
+            Some(s) => Some(super::statuses::render_status(config, &db, s, Some(&account)).await?),
+            None => None
+        },
         account: super::accounts::render_account(config, &db, account).await?,
-        status: None,
         report: None,
     })
 }
