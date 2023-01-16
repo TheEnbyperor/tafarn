@@ -5,21 +5,27 @@ use futures::StreamExt;
 pub async fn timeline_home(
     config: &rocket::State<crate::AppConfig>, db: crate::DbConn, user: super::oauth::TokenClaims,
     max_id: Option<i32>, since_id: Option<i32>, min_id: Option<i32>,
-    limit: Option<u64>, host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
+    limit: Option<u64>, host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     if !user.has_scope("read:statuses") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let limit = limit.unwrap_or(20);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
 
     let statuses: Vec<(crate::models::HomeTimelineEntry, crate::models::Status)> =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::home_timeline::dsl::home_timeline.filter(
                 crate::schema::home_timeline::dsl::account_id.eq(&account.id)
             ).filter(
@@ -61,7 +67,7 @@ pub async fn timeline_home(
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(
             futures::stream::iter(statuses).map(|status| {
-                super::statuses::render_status(config, &db, status.1, Some(&account))
+                super::statuses::render_status(config, &db, status.1, &localizer, Some(&account))
             }).buffered(10).collect::<Vec<_>>().await
                 .into_iter().collect::<Result<Vec<_>, _>>()?
         ),
@@ -74,11 +80,11 @@ pub async fn timeline_hashtag(
     config: &rocket::State<crate::AppConfig>, hashtag: &str, any: Option<Vec<&str>>, all: Option<Vec<&str>>,
     none: Option<Vec<&str>>, local: Option<&str>, remote: Option<&str>,
     only_media: Option<&str>, max_id: Option<String>, since_id: Option<i32>,
-    min_id: Option<String>, limit: Option<u64>
-) -> Result<rocket::serde::json::Json<Vec<super::objs::Status>>, rocket::http::Status> {
-    let _local = super::parse_bool(local, false)?;
-    let _remote = super::parse_bool(remote, false)?;
-    let _only_media = super::parse_bool(only_media, false)?;
+    min_id: Option<String>, limit: Option<u64>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<Vec<super::objs::Status>>, super::Error> {
+    let _local = super::parse_bool(local, false, &localizer)?;
+    let _remote = super::parse_bool(remote, false, &localizer)?;
+    let _only_media = super::parse_bool(only_media, false, &localizer)?;
 
     Ok(rocket::serde::json::Json(vec![]))
 }
@@ -88,30 +94,36 @@ pub async fn timeline_public(
     config: &rocket::State<crate::AppConfig>, db: crate::DbConn, user: Option<super::oauth::TokenClaims>,
     local: Option<&str>, remote: Option<&str>, only_media: Option<&str>,
     max_id: Option<i32>, since_id: Option<i32>, min_id: Option<i32>, limit: Option<u64>,
-    host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
-    let local = super::parse_bool(local, false)?;
-    let remote = super::parse_bool(remote, false)?;
-    let _only_media = super::parse_bool(only_media, false)?;
+    host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
+    let local = super::parse_bool(local, false, &localizer)?;
+    let remote = super::parse_bool(remote, false, &localizer)?;
+    let _only_media = super::parse_bool(only_media, false, &localizer)?;
 
     if let Some(user) = &user {
         if !user.has_scope("read:statuses") {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         }
     }
 
     let limit = limit.unwrap_or(20);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
     let account = match &user {
-        Some(u) => Some(super::accounts::get_account(&db, u).await?),
+        Some(u) => Some(super::accounts::get_account(&db, &localizer, u).await?),
         None => None
     };
 
     let statuses: Vec<(crate::models::PublicTimelineEntry, crate::models::Status)> =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::public_timeline::dsl::public_timeline.order_by(
                 crate::schema::public_timeline::dsl::id.desc()
             ).filter(
@@ -157,7 +169,7 @@ pub async fn timeline_public(
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(
             futures::stream::iter(statuses).map(|status| {
-                super::statuses::render_status(config, &db, status.1, account.as_ref())
+                super::statuses::render_status(config, &db, status.1, &localizer, account.as_ref())
             }).buffered(10).collect::<Vec<_>>().await
                 .into_iter().collect::<Result<Vec<_>, _>>()?
         ),

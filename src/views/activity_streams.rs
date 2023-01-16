@@ -961,13 +961,13 @@ pub async fn system_actor(
     }))
 }
 
-async fn get_account(db: &crate::DbConn, id: &str) -> Result<crate::models::Account, rocket::http::Status> {
+async fn get_account(db: &crate::DbConn, localizer: &crate::i18n::Localizer, id: &str) -> Result<crate::models::Account, rocket::http::Status> {
     let account_id = match uuid::Uuid::parse_str(id) {
         Ok(id) => id,
         Err(_) => return Err(rocket::http::Status::NotFound)
     };
 
-    let account: crate::models::Account = crate::db_run(db, move |c| -> diesel::result::QueryResult<_> {
+    let account: crate::models::Account = crate::db_run(db, localizer, move |c| -> diesel::result::QueryResult<_> {
         crate::schema::accounts::dsl::accounts.find(account_id).get_result(c)
     }).await?;
 
@@ -980,9 +980,9 @@ async fn get_account(db: &crate::DbConn, id: &str) -> Result<crate::models::Acco
 
 #[get("/as/users/<id>")]
 pub async fn user(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str,
+    db: crate::DbConn, localizer: crate::i18n::Localizer, config: &rocket::State<AppConfig>, id: &str,
 ) -> Result<Object, rocket::http::Status> {
-    let account = get_account(&db, id).await?;
+    let account = get_account(&db, &localizer, id).await?;
 
     let account = match crate::tasks::accounts::render_account(&account) {
         Ok(a) => a,
@@ -1000,9 +1000,9 @@ pub async fn get_inbox(_id: &str) -> rocket::http::Status {
 #[post("/as/users/<id>/inbox", data = "<data>")]
 pub async fn post_inbox(
     db: crate::DbConn, id: &str, data: Object, signature: Signature,
-    celery: &rocket::State<crate::CeleryApp>,
+    celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
 ) -> Result<(), rocket::http::Status> {
-    get_account(&db, id).await?;
+    get_account(&db, &localizer, id).await?;
 
     match celery.send_task(
         super::super::tasks::inbox::process_activity::new(data, signature)
@@ -1019,9 +1019,9 @@ pub async fn post_inbox(
 
 #[get("/as/users/<id>/outbox")]
 pub async fn get_outbox(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str,
+    db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str, localizer: crate::i18n::Localizer
 ) -> Result<Object, rocket::http::Status> {
-    let account = get_account(&db, id).await?;
+    let account = get_account(&db, &localizer, id).await?;
 
     Ok(Object::OrderedCollection(Collection {
         common: ObjectCommon {
@@ -1039,8 +1039,9 @@ pub async fn get_outbox(
 #[get("/as/users/<id>/outbox/page?<before>")]
 pub async fn get_outbox_page(
     db: crate::DbConn, config: &rocket::State<AppConfig>, id: &str, before: Option<i64>,
+    localizer: crate::i18n::Localizer
 ) -> Result<Object, rocket::http::Status> {
-    let account = get_account(&db, id).await?;
+    let account = get_account(&db, &localizer, id).await?;
 
     Ok(Object::OrderedCollectionPage(CollectionPage {
         common: Collection {
@@ -1093,7 +1094,7 @@ pub async fn post_shared_inbox(
 
 #[get("/as/status/<id>")]
 pub async fn status(
-    db: crate::DbConn, id: &str,
+    db: crate::DbConn, id: &str, localizer: crate::i18n::Localizer
 ) -> Result<Object, rocket::http::Status> {
     let status_id = match uuid::Uuid::parse_str(id) {
         Ok(id) => id,
@@ -1101,7 +1102,7 @@ pub async fn status(
     };
 
     let (status, account): (crate::models::Status, crate::models::Account) =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(status_id).inner_join(
                 crate::schema::accounts::table.on(
                     crate::schema::statuses::dsl::account_id.eq(crate::schema::accounts::dsl::id)
@@ -1132,7 +1133,7 @@ pub async fn status(
 
 #[get("/as/status/<id>/activity")]
 pub async fn status_activity(
-    db: crate::DbConn, id: &str,
+    db: crate::DbConn, id: &str, localizer: crate::i18n::Localizer
 ) -> Result<Object, rocket::http::Status> {
     let status_id = match uuid::Uuid::parse_str(id) {
         Ok(id) => id,
@@ -1140,7 +1141,7 @@ pub async fn status_activity(
     };
 
     let (status, account): (crate::models::Status, crate::models::Account) =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(status_id).inner_join(
                 crate::schema::accounts::table.on(
                     crate::schema::statuses::dsl::account_id.eq(crate::schema::accounts::dsl::id)
@@ -1166,7 +1167,7 @@ pub async fn status_activity(
             return Err(rocket::http::Status::Gone);
         }
 
-        let boosted_status: crate::models::Status = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let boosted_status: crate::models::Status = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(boost_of_id).get_result(c)
         }).await?;
 
@@ -1181,7 +1182,7 @@ pub async fn status_activity(
 
 #[get("/as/like/<id>")]
 pub async fn like(
-    db: crate::DbConn, id: &str,
+    db: crate::DbConn, id: &str, localizer: crate::i18n::Localizer
 ) -> Result<Object, rocket::http::Status> {
     let like_id = match uuid::Uuid::parse_str(id) {
         Ok(id) => id,
@@ -1189,7 +1190,7 @@ pub async fn like(
     };
 
     let (like, account, liked_status): (crate::models::Like, crate::models::Account, crate::models::Status) =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::likes::dsl::likes.find(like_id).inner_join(
                 crate::schema::accounts::table.on(
                     crate::schema::likes::dsl::account.eq(crate::schema::accounts::dsl::id)

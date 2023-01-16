@@ -6,8 +6,9 @@ use crate::models;
 #[async_recursion::async_recursion]
 pub async fn render_status(
     config: &crate::AppConfig, db: &crate::DbConn, status: models::Status,
+    localizer: &crate::i18n::Localizer,
     req_account: Option<&'async_recursion models::Account>,
-) -> Result<super::objs::Status, rocket::http::Status> {
+) -> Result<super::objs::Status, super::Error> {
     let req_account_id = req_account.map(|a| a.id);
 
     let visibility = if status.public {
@@ -15,7 +16,7 @@ pub async fn render_status(
     } else if status.visible {
         super::objs::StatusVisibility::Unlisted
     } else {
-        if crate::db_run(db, move |c| -> QueryResult<_> {
+        if crate::db_run(db, localizer, move |c| -> QueryResult<_> {
             crate::schema::status_audiences::dsl::status_audiences.filter(
                 crate::schema::status_audiences::dsl::status_id.eq(status.id)
             ).filter(
@@ -28,13 +29,13 @@ pub async fn render_status(
         }
     };
 
-    let account = crate::db_run(db, move |c| -> QueryResult<_> {
+    let account = crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::accounts::dsl::accounts.find(status.account_id)
             .get_result::<models::Account>(c)
     }).await?;
 
     let in_reply_to = match status.in_reply_to_id {
-        Some(id) => Some(crate::db_run(db, move |c| -> QueryResult<_> {
+        Some(id) => Some(crate::db_run(db, localizer, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(id).inner_join(
                 crate::schema::accounts::table.on(
                     crate::schema::accounts::dsl::id.eq(crate::schema::statuses::dsl::account_id)
@@ -46,14 +47,14 @@ pub async fn render_status(
     };
 
     let boost = match status.boost_of_id {
-        Some(id) => Some(crate::db_run(db, move |c| -> QueryResult<_> {
+        Some(id) => Some(crate::db_run(db, localizer, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses.find(id)
                 .get_result::<models::Status>(c)
         }).await?),
         None => None
     };
 
-    let (like_count, boost_count, replies_count) = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let (like_count, boost_count, replies_count) = crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         let lc = crate::schema::likes::dsl::likes.filter(
             crate::schema::likes::dsl::status.eq(status.id)
         ).count().get_result::<i64>(c)?;
@@ -71,7 +72,7 @@ pub async fn render_status(
     }).await?;
 
     let media_attachments: Vec<(models::MediaAttachment, models::Media)> =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::media_attachments::dsl::media_attachments.filter(
             crate::schema::media_attachments::dsl::status.eq(status.id)
         ).inner_join(
@@ -86,7 +87,7 @@ pub async fn render_status(
             if status.account_id == account && status.boost_of_id.is_some() {
                 Some(true)
             } else {
-                Some(crate::db_run(db, move |c| -> QueryResult<_> {
+                Some(crate::db_run(db, localizer, move |c| -> QueryResult<_> {
                     crate::schema::statuses::dsl::statuses.filter(
                         crate::schema::statuses::dsl::boost_of_id.eq(status.id)
                     ).filter(
@@ -101,7 +102,7 @@ pub async fn render_status(
     };
     let liked = match req_account_id {
         Some(account) => {
-            Some(crate::db_run(&db, move |c| -> QueryResult<_> {
+            Some(crate::db_run(db, localizer, move |c| -> QueryResult<_> {
                 crate::schema::likes::dsl::likes.filter(
                     crate::schema::likes::dsl::status.eq(status.id)
                 ).filter(
@@ -113,7 +114,7 @@ pub async fn render_status(
     };
     let bookmarked = match req_account_id {
         Some(account) => {
-            Some(crate::db_run(&db, move |c| -> QueryResult<_> {
+            Some(crate::db_run(db, localizer, move |c| -> QueryResult<_> {
                 crate::schema::bookmarks::dsl::bookmarks.filter(
                     crate::schema::bookmarks::dsl::status.eq(status.id)
                 ).filter(
@@ -125,7 +126,7 @@ pub async fn render_status(
     };
     let pinned = match req_account_id {
         Some(account) => {
-            Some(crate::db_run(&db, move |c| -> QueryResult<_> {
+            Some(crate::db_run(db, localizer, move |c| -> QueryResult<_> {
                 crate::schema::pins::dsl::pins.filter(
                     crate::schema::pins::dsl::status.eq(status.id)
                 ).filter(
@@ -140,13 +141,13 @@ pub async fn render_status(
         id: status.iid.to_string(),
         uri: status.url(&config.uri),
         created_at: Utc.from_utc_datetime(&status.created_at),
-        account: super::accounts::render_account(config, db, account).await?,
+        account: super::accounts::render_account(config, db, localizer, account).await?,
         content: status.text,
         visibility,
         sensitive: status.sensitive,
         spoiler_text: status.spoiler_text,
         media_attachments: media_attachments.into_iter()
-            .map(|(_, m)| super::media::render_media_attachment(m, config)).collect::<Result<Vec<_>, _>>()?,
+            .map(|(_, m)| super::media::render_media_attachment(m, config, localizer)).collect::<Result<Vec<_>, _>>()?,
         mentions: vec![],
         tags: vec![],
         emojis: vec![],
@@ -157,7 +158,7 @@ pub async fn render_status(
         in_reply_to_id: in_reply_to.as_ref().map(|x| x.0.iid.to_string()),
         in_reply_to_account_id: in_reply_to.as_ref().map(|x| x.1.iid.to_string()),
         reblog: match boost {
-            Some(boost) => Some(Box::new(render_status(config, db, boost, req_account).await?)),
+            Some(boost) => Some(Box::new(render_status(config, db, boost, localizer, req_account).await?)),
             None => None
         },
         poll: None,
@@ -173,8 +174,9 @@ pub async fn render_status(
 }
 
 pub async fn can_view(
-    status: &models::Status, account: Option<&models::Account>, db: &crate::DbConn
-) -> Result<bool, rocket::http::Status> {
+    status: &models::Status, account: Option<&models::Account>, db: &crate::DbConn,
+    localizer: &crate::i18n::Localizer
+) -> Result<bool, super::Error> {
     if status.visible {
         Ok(true)
     } else {
@@ -185,7 +187,7 @@ pub async fn can_view(
 
             let account_id = account.id;
             let status_id = status.id;
-            if crate::db_run(db, move |c| -> QueryResult<_> {
+            if crate::db_run(db, localizer, move |c| -> QueryResult<_> {
                 crate::schema::status_audiences::dsl::status_audiences.filter(
                     crate::schema::status_audiences::dsl::status_id.eq(&status_id)
                 ).filter(
@@ -195,7 +197,7 @@ pub async fn can_view(
                 return Ok(true);
             }
 
-            if crate::db_run(db, move |c| -> QueryResult<_> {
+            if crate::db_run(db, localizer, move |c| -> QueryResult<_> {
                 crate::schema::status_audiences::dsl::status_audiences.filter(
                     crate::schema::status_audiences::dsl::status_id.eq(&status_id)
                 ).inner_join(crate::schema::following::table.on(
@@ -218,30 +220,42 @@ pub async fn can_view(
 
 pub async fn get_status_and_check_visibility(
     status_id: &str, account: Option<&models::Account>,
-    db: &crate::DbConn,
-) -> Result<crate::models::Status, rocket::http::Status> {
+    db: &crate::DbConn, localizer: &crate::i18n::Localizer
+) -> Result<models::Status, super::Error> {
     let status_id = match status_id.parse::<i32>() {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-status-not-found")
+        })
     };
 
-    let status = match crate::db_run(db, move |c| -> QueryResult<_> {
+    let status = match crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::statuses::dsl::statuses.filter(
             crate::schema::statuses::dsl::iid.eq(status_id)
         ).get_result::<models::Status>(c).optional()
     }).await? {
         Some(m) => m,
-        None => return Err(rocket::http::Status::NotFound)
+        None => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-status-not-found")
+        })
     };
 
     if status.deleted_at.is_some() {
-        return Err(rocket::http::Status::Gone);
+        return Err(super::Error {
+            code: rocket::http::Status::Gone,
+            error: fl!(localizer, "status-deleted")
+        });
     }
 
-    if can_view(&status, account, db).await? {
+    if can_view(&status, account, db, localizer).await? {
         Ok(status)
     } else {
-        Err(rocket::http::Status::NotFound)
+        Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-status-not-found")
+        })
     }
 }
 
@@ -286,19 +300,23 @@ pub struct CreateStatus<'a> {
     visibility: super::objs::StatusVisibility,
 }
 
-impl<'a> TryFrom<StatusForm<'a>> for CreateStatus<'a> {
-    type Error = rocket::http::Status;
-
-    fn try_from(value: StatusForm<'a>) -> Result<Self, Self::Error> {
+impl<'a> CreateStatus<'a> {
+    fn from_form(value: StatusForm<'a>, localizer: &crate::i18n::Localizer) -> Result<Self, super::Error> {
         Ok(CreateStatus {
             status: value.status,
             media_ids: value.media_ids.iter().flatten()
                 .map(|x| uuid::Uuid::parse_str(x))
-                .collect::<Result<Vec<_>, _>>().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+                .collect::<Result<Vec<_>, _>>().map_err(|_| super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-media-not-found")
+            })?,
             in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i32>())
-                .transpose().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+                .transpose().map_err(|_| super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-status-not-found")
+            })?,
             sensitive: if value.sensitive.is_some() {
-                Some(super::parse_bool(value.sensitive, false)?)
+                Some(super::parse_bool(value.sensitive, false, &localizer)?)
             } else {
                 None
             },
@@ -307,32 +325,40 @@ impl<'a> TryFrom<StatusForm<'a>> for CreateStatus<'a> {
             visibility: match value.visibility {
                 Some(v) => match super::objs::StatusVisibility::from_str(v) {
                     Some(v) => v,
-                    None => return Err(rocket::http::Status::UnprocessableEntity)
+                    None => return Err(super::Error {
+                        code: rocket::http::Status::UnprocessableEntity,
+                        error: fl!(localizer, "error-invalid-visibility")
+                    })
                 },
                 None => super::objs::StatusVisibility::Public
             }
         })
     }
-}
 
-impl<'a> TryFrom<StatusJson<'a>> for CreateStatus<'a> {
-    type Error = rocket::http::Status;
-
-    fn try_from(value: StatusJson<'a>) -> Result<Self, Self::Error> {
+    fn from_json(value: StatusJson<'a>, localizer: &crate::i18n::Localizer) -> Result<Self, super::Error> {
         Ok(CreateStatus {
             status: value.status,
             media_ids: value.media_ids.iter().flatten()
                 .map(|x| uuid::Uuid::parse_str(x))
-                .collect::<Result<Vec<_>, _>>().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+                .collect::<Result<Vec<_>, _>>().map_err(|_| super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-media-not-found")
+            })?,
             in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i32>())
-                .transpose().map_err(|_| rocket::http::Status::UnprocessableEntity)?,
+                .transpose().map_err(|_| super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-status-not-found")
+            })?,
             sensitive: value.sensitive,
             spoiler_text: value.spoiler_text,
             language: value.language,
             visibility: match value.visibility {
                 Some(v) => match super::objs::StatusVisibility::from_str(v) {
                     Some(v) => v,
-                    None => return Err(rocket::http::Status::UnprocessableEntity)
+                    None => return Err(super::Error {
+                        code: rocket::http::Status::UnprocessableEntity,
+                        error: fl!(localizer, "error-invalid-visibility")
+                    })
                 },
                 None => super::objs::StatusVisibility::Public
             }
@@ -343,63 +369,78 @@ impl<'a> TryFrom<StatusJson<'a>> for CreateStatus<'a> {
 #[post("/api/v1/statuses", data = "<form>", rank = 1)]
 pub async fn create_status_form(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    form: rocket::form::Form<StatusForm<'_>>, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
-    _create_status(db, config, user, form.into_inner().try_into()?, celery).await
+    form: rocket::form::Form<StatusForm<'_>>, celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
+    _create_status(db, config, user, CreateStatus::from_form(form.into_inner(), &localizer)?, celery, localizer).await
 }
 
 #[post("/api/v1/statuses", data = "<form>", rank = 2)]
 pub async fn create_status_json(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    form: rocket::serde::json::Json<StatusJson<'_>>, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
-    _create_status(db, config, user, form.into_inner().try_into()?, celery).await
+    form: rocket::serde::json::Json<StatusJson<'_>>, celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
+    _create_status(db, config, user, CreateStatus::from_json(form.into_inner(), &localizer)?, celery, localizer).await
 }
 
 pub async fn _create_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    form: CreateStatus<'_>, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    form: CreateStatus<'_>, celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:statuses") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
     let status_source = form.status.unwrap_or("");
     let status_text = comrak::markdown_to_html(status_source, &crate::COMRAK_OPTIONS).trim().to_string();
     let language = form.language.or(account.default_language.as_deref())
         .map(|x| x.to_string());
     let in_reply_to = match form.in_reply_to_id {
-        Some(id) => match crate::db_run(&db, move |c| -> QueryResult<_> {
+        Some(id) => match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::statuses::dsl::statuses
                 .filter(crate::schema::statuses::dsl::iid.eq(id))
                 .get_result::<models::Status>(c).optional()
         }).await? {
             Some(s) => Some(s),
-            None => return Err(rocket::http::Status::UnprocessableEntity)
+            None => return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-status-not-found")
+            })
         },
         None => None
     };
 
     let mut media = vec![];
     for id in form.media_ids {
-        match crate::db_run(&db, move |c| -> QueryResult<_> {
+        match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::media::dsl::media
                 .filter(crate::schema::media::dsl::id.eq(id))
                 .get_result::<models::Media>(c).optional()
         }).await? {
             Some(m) => {
                 if m.owned_by.as_deref() != Some(&user.subject) {
-                    return Err(rocket::http::Status::Forbidden);
+                    return Err(super::Error {
+                        code: rocket::http::Status::Forbidden,
+                        error: fl!(localizer, "error-no-permission")
+                    });
                 }
                 media.push(m);
             },
-            None => return Err(rocket::http::Status::UnprocessableEntity)
+            None => return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-media-not-found")
+            })
         }
     }
 
     if status_text.is_empty() && media.is_empty() {
-        return Err(rocket::http::Status::UnprocessableEntity);
+        return Err(super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "error-invalid-status")
+        });
     }
 
     let mut new_status_audiences = vec![];
@@ -444,7 +485,7 @@ pub async fn _create_status(
         media: m.id
     }).collect::<Vec<_>>();
 
-    let s = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let s = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         c.transaction::<_, diesel::result::Error, _>(|| {
             let s = diesel::insert_into(crate::schema::statuses::dsl::statuses)
                 .values(new_status)
@@ -465,51 +506,63 @@ pub async fn _create_status(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, s, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, s, &localizer, Some(&account)).await?))
 }
 
 #[get("/api/v1/statuses/<status_id>")]
 pub async fn get_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
-    user: Option<super::oauth::TokenClaims>, status_id: String,
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    user: Option<super::oauth::TokenClaims>, status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if let Some(user) = &user {
         if !user.has_scope("read:statuses") {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         }
     }
 
     let account = match &user {
-        Some(u) => Some(super::accounts::get_account(&db, u).await?),
+        Some(u) => Some(super::accounts::get_account(&db, &localizer, u).await?),
         None => None
     };
 
-    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db).await?;
+    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db, &localizer).await?;
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, status, account.as_ref()).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer,account.as_ref()).await?))
 }
 
 #[delete("/api/v1/statuses/<status_id>")]
 pub async fn delete_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    celery: &rocket::State<crate::CeleryApp>, status_id: String,
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    celery: &rocket::State<crate::CeleryApp>, status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:statuses") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
     if status.account_id != account.id {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let status = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let status = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::update(&status)
             .set(crate::schema::statuses::dsl::deleted_at.eq(Utc::now().naive_utc()))
             .get_result::<models::Status>(c)
@@ -521,32 +574,38 @@ pub async fn delete_status(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?))
 }
 
 #[get("/api/v1/statuses/<status_id>/context")]
 pub async fn status_context(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
-    user: Option<super::oauth::TokenClaims>, status_id: String,
-) -> Result<rocket::serde::json::Json<super::objs::Context>, rocket::http::Status> {
+    user: Option<super::oauth::TokenClaims>, status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Context>, super::Error> {
     if let Some(user) = &user {
         if !user.has_scope("read:statuses") {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         }
     }
 
     let account = match &user {
-        Some(u) => Some(super::accounts::get_account(&db, u).await?),
+        Some(u) => Some(super::accounts::get_account(&db, &localizer, u).await?),
         None => None
     };
 
-    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db).await?;
+    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db, &localizer).await?;
 
-    let (ancestors, descendants) = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let (ancestors, descendants) = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let mut descendants = vec![];
         let mut ancestors = vec![];
 
@@ -583,10 +642,10 @@ pub async fn status_context(
 
     Ok(rocket::serde::json::Json(super::objs::Context {
         ancestors: futures::stream::iter(ancestors).map(|status| {
-            render_status(config, &db, status, account.as_ref())
+            render_status(config, &db, status, &localizer, account.as_ref())
         }).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?,
         descendants: futures::stream::iter(descendants).map(|status| {
-            render_status(config, &db, status, account.as_ref())
+            render_status(config, &db, status, &localizer, account.as_ref())
         }).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?,
     }))
 }
@@ -596,26 +655,33 @@ pub async fn status_boosted_by(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
     user: Option<super::oauth::TokenClaims>, status_id: String,
     limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, rocket::http::Status> {
+    localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, super::Error> {
     if let Some(user) = &user {
         if !user.has_scope("read:statuses") {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         }
     }
 
     let account = match &user {
-        Some(u) => Some(super::accounts::get_account(&db, u).await?),
+        Some(u) => Some(super::accounts::get_account(&db, &localizer, u).await?),
         None => None
     };
 
     let limit = limit.unwrap_or(40);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db).await?;
+    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db, &localizer).await?;
 
-    let boosted_by = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let boosted_by = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let mut sel = crate::schema::statuses::dsl::statuses.filter(
             crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
@@ -651,7 +717,7 @@ pub async fn status_boosted_by(
 
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(futures::stream::iter(boosted_by.into_iter()).map(|(_, a)| {
-            super::accounts::render_account(config, &db, a)
+            super::accounts::render_account(config, &db, &localizer, a)
         }).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?),
         links
     })
@@ -663,26 +729,33 @@ pub async fn status_liked_by(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
     user: Option<super::oauth::TokenClaims>, status_id: String,
     limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, rocket::http::Status> {
+    localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, super::Error> {
     if let Some(user) = &user {
         if !user.has_scope("read:statuses") {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         }
     }
 
     let account = match &user {
-        Some(u) => Some(super::accounts::get_account(&db, u).await?),
+        Some(u) => Some(super::accounts::get_account(&db, &localizer, u).await?),
         None => None
     };
 
     let limit = limit.unwrap_or(40);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db).await?;
+    let status = get_status_and_check_visibility(&status_id, account.as_ref(), &db, &localizer).await?;
 
-    let boosted_by = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let boosted_by = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let mut sel = crate::schema::likes::dsl::likes.filter(
             crate::schema::likes::dsl::status.eq(status.id)
         ).inner_join(
@@ -716,7 +789,7 @@ pub async fn status_liked_by(
 
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(futures::stream::iter(boosted_by.into_iter()).map(|(_, a)| {
-            super::accounts::render_account(config, &db, a)
+            super::accounts::render_account(config, &db, &localizer, a)
         }).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?),
         links
     })
@@ -731,16 +804,19 @@ pub struct BoostForm<'a> {
 pub async fn boost_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
     status_id: String, form: Option<rocket::form::Form<BoostForm<'_>>>,
-    celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:statuses") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    if let Some(status) = crate::db_run(&db, move |c| -> QueryResult<_> {
+    if let Some(status) = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::statuses::dsl::statuses.filter(
             crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
@@ -749,13 +825,16 @@ pub async fn boost_status(
             crate::schema::statuses::dsl::deleted_at.is_null()
         ).get_result::<models::Status>(c).optional()
     }).await? {
-        return Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?));
+        return Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?));
     }
 
     let audience = match form.and_then(|f| f.visibility) {
         Some(v) => match super::objs::StatusVisibility::from_str(v) {
             Some(v) => v,
-            None => return Err(rocket::http::Status::UnprocessableEntity)
+            None => return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "error-invalid-visibility")
+            })
         },
         None => super::objs::StatusVisibility::Public
     };
@@ -764,7 +843,10 @@ pub async fn boost_status(
         super::objs::StatusVisibility::Public |
         super::objs::StatusVisibility::Unlisted |
         super::objs::StatusVisibility::Private => (),
-        _ => return Err(rocket::http::Status::BadRequest)
+        _ => return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "error-invalid-visibility")
+        })
     }
 
     let new_status = models::NewStatus {
@@ -805,7 +887,7 @@ pub async fn boost_status(
         account: Some(status.account_id),
         account_followers: None,
     };
-    let s = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let s = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         c.transaction::<_, diesel::result::Error, _>(|| {
             let s = diesel::insert_into(crate::schema::statuses::dsl::statuses)
                 .values(new_status)
@@ -823,26 +905,32 @@ pub async fn boost_status(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, s, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, s, &localizer, Some(&account)).await?))
 }
 
 #[post("/api/v1/statuses/<status_id>/unreblog")]
 pub async fn unboost_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:statuses") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    let mut boost_status: models::Status = match crate::db_run(&db, move |c| -> QueryResult<_> {
+    let mut boost_status: models::Status = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::statuses::dsl::statuses.filter(
             crate::schema::statuses::dsl::boost_of_id.eq(status.id)
         ).filter(
@@ -852,12 +940,12 @@ pub async fn unboost_status(
         ).get_result(c).optional()
     }).await? {
         Some(s) => s,
-        None => return Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+        None => return Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?))
     };
 
     boost_status.deleted_at = Some(Utc::now().naive_utc());
 
-    let boost_status = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let boost_status = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::update(&boost_status)
             .set(&boost_status)
             .get_result::<models::Status>(c)
@@ -869,33 +957,39 @@ pub async fn unboost_status(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?))
 }
 
 #[post("/api/v1/statuses/<status_id>/pin")]
 pub async fn pin_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:accounts") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    if crate::db_run(&db, move |c| -> QueryResult<_> {
+    if crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::pins::dsl::pins.filter(
             crate::schema::pins::dsl::status.eq(status.id)
         ).filter(
             crate::schema::pins::dsl::account.eq(&account.id)
         ).count().get_result::<i64>(c)
     }).await? > 0 {
-        return Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?));
+        return Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?));
     }
 
     let new_pin = models::NewPin {
@@ -903,28 +997,31 @@ pub async fn pin_status(
         account: account.id,
         status: status.id,
     };
-    crate::db_run(&db, move |c| -> QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::insert_into(crate::schema::pins::dsl::pins)
             .values(new_pin)
             .execute(c)
     }).await?;
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?))
 }
 
 #[post("/api/v1/statuses/<status_id>/unpin")]
 pub async fn unpin_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String,
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:accounts") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    crate::db_run(&db, move |c| -> QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::delete(crate::schema::pins::dsl::pins.filter(
             crate::schema::pins::dsl::status.eq(status.id)
         ).filter(
@@ -932,5 +1029,5 @@ pub async fn unpin_status(
         )).execute(c)
     }).await?;
 
-    Ok(rocket::serde::json::Json(render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(render_status(config, &db, status, &localizer, Some(&account)).await?))
 }

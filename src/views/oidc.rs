@@ -52,6 +52,11 @@ impl<'r> rocket::request::FromRequest<'r> for OIDCUser {
             rocket::request::Outcome::Forward(()) => return rocket::request::Outcome::Forward(()),
             rocket::request::Outcome::Failure(e) => return rocket::request::Outcome::Failure(e)
         };
+        let localizer = match request.guard::<crate::i18n::Localizer>().await {
+            rocket::request::Outcome::Success(a) => a,
+            rocket::request::Outcome::Forward(()) => return rocket::request::Outcome::Forward(()),
+            rocket::request::Outcome::Failure(e) => return rocket::request::Outcome::Failure((e.0, ()))
+        };
 
         let state_txt = match request.cookies().get_private("oidc_login") {
             Some(t) => t,
@@ -62,12 +67,12 @@ impl<'r> rocket::request::FromRequest<'r> for OIDCUser {
             Err(_) => return rocket::request::Outcome::Forward(()),
         };
 
-        let session = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+        let session = match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
             crate::schema::session::dsl::session.find(session_id).first::<crate::models::Session>(c)
         }).await {
             Ok(s) => s,
             Err(err) => {
-                error!("Unable to retrieve session from database: {}", err);
+                error!("Unable to retrieve session from database");
                 return rocket::request::Outcome::Forward(())
             }
         };
@@ -120,14 +125,14 @@ impl<'r> rocket::request::FromRequest<'r> for OIDCUser {
                             claims: serde_json::to_string(&id_claims).unwrap(),
                         };
 
-                        match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+                        match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
                             diesel::update(crate::schema::session::dsl::session)
                                 .set(&new_session)
                                 .execute(c)
                         }).await  {
                             Ok(_) => {},
                             Err(err) => {
-                                error!("Unable to update session in database: {}", err);
+                                error!("Unable to update session in database:");
                                 return rocket::request::Outcome::Failure((rocket::http::Status::InternalServerError, ()));
                             }
                         }
@@ -275,6 +280,7 @@ impl<'r> rocket::response::Responder<'r, 'static> for OIDCAuthorizeRedirect {
 pub async fn oidc_redirect(
     cookies: &CookieJar<'_>, oidc_app: &rocket::State<OIDCApplication>,
     code: String, state: &str, db: crate::DbConn, lang: crate::i18n::Languages,
+    localizer: crate::i18n::Localizer
 ) -> Result<Redirect, rocket::http::Status> {
     let state_txt = match cookies.get_private("oidc_auth_state") {
         Some(t) => t,
@@ -334,7 +340,7 @@ pub async fn oidc_redirect(
         claims: serde_json::to_string(&id_claims).unwrap(),
     };
 
-    crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
         diesel::insert_into(crate::schema::session::dsl::session)
             .values(&session)
             .execute(c)
@@ -349,7 +355,7 @@ pub async fn oidc_redirect(
             .finish()
     );
 
-    super::accounts::init_account(db, &id_claims, &lang).await?;
+    super::accounts::init_account(db, &id_claims, &lang, &localizer).await?;
 
     Ok(Redirect::temporary(state_obj.return_uri))
 }

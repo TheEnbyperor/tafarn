@@ -32,12 +32,15 @@ embed_migrations!("./migrations");
 pub async fn db_run<
     T: 'static + Send,
     F: 'static + FnOnce(&mut diesel::PgConnection) -> diesel::result::QueryResult<T> + Send
->(db: &DbConn, func: F) -> Result<T, rocket::http::Status> {
+>(db: &DbConn, localizer: &i18n::Localizer, func: F) -> Result<T, views::Error> {
     Ok(match db.run(func).await {
         Ok(r) => r,
         Err(e) => {
             warn!("DB error: {}", e);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(views::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "error-db"),
+            });
         }
     })
 }

@@ -81,14 +81,18 @@ fn render_subscription(
 pub async fn create_subscription(
     db: crate::DbConn, config: &rocket::State<AppConfig>,
     user: super::oauth::TokenClaims, data: rocket::serde::json::Json<WebPushSubscription>,
-) -> Result<rocket::serde::json::Json<super::objs::WebPushSubscription>, rocket::http::Status> {
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::WebPushSubscription>, super::Error> {
     if !user.has_scope("push") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = user.get_account(&db).await?;
+    let account = user.get_account(&db, &localizer).await?;
 
-    let new_subscription = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let new_subscription = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let new_subscription = crate::models::WebPushSubscription {
             id: uuid::Uuid::new_v4(),
             token_id: user.json_web_token_id,
@@ -130,12 +134,16 @@ pub async fn create_subscription(
 #[get("/api/v1/push/subscription")]
 pub async fn get_subscription(
     db: crate::DbConn, user: super::oauth::TokenClaims, config: &rocket::State<AppConfig>,
-) -> Result<rocket::serde::json::Json<super::objs::WebPushSubscription>, rocket::http::Status> {
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::WebPushSubscription>, super::Error> {
     if !user.has_scope("push") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let subscription: crate::models::WebPushSubscription = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let subscription: crate::models::WebPushSubscription = crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
         crate::schema::web_push_subscriptions::dsl::web_push_subscriptions.filter(
             crate::schema::web_push_subscriptions::dsl::token_id.eq(user.json_web_token_id)
         ).get_result(c)
@@ -154,10 +162,13 @@ pub struct WebPushSubscriptionUpdate {
 #[put("/api/v1/push/subscription", data = "<data>")]
 pub async fn update_subscription(
     db: crate::DbConn, user: super::oauth::TokenClaims, config: &rocket::State<AppConfig>,
-    data: rocket::serde::json::Json<WebPushSubscriptionUpdate>,
-) -> Result<rocket::serde::json::Json<super::objs::WebPushSubscription>, rocket::http::Status> {
+    data: rocket::serde::json::Json<WebPushSubscriptionUpdate>,  localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::WebPushSubscription>, super::Error> {
     if !user.has_scope("push") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     use crate::schema::web_push_subscriptions;
@@ -177,7 +188,7 @@ pub async fn update_subscription(
         policy: Option<String>,
     }
 
-    let subscription: crate::models::WebPushSubscription = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let subscription: crate::models::WebPushSubscription = crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
         diesel::update(crate::schema::web_push_subscriptions::dsl::web_push_subscriptions.filter(
             crate::schema::web_push_subscriptions::dsl::token_id.eq(user.json_web_token_id)
         ))
@@ -203,13 +214,16 @@ pub async fn update_subscription(
 
 #[delete("/api/v1/push/subscription")]
 pub async fn delete_subscription(
-    db: crate::DbConn, user: super::oauth::TokenClaims,
-) -> Result<rocket::serde::json::Json<()>, rocket::http::Status> {
+    db: crate::DbConn, user: super::oauth::TokenClaims, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("push") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::delete(crate::schema::web_push_subscriptions::dsl::web_push_subscriptions.filter(
                 crate::schema::web_push_subscriptions::dsl::token_id.eq(user.json_web_token_id)
             )).execute(c)

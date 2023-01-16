@@ -1,9 +1,12 @@
 #[get("/api/v1/suggestions")]
 pub async fn suggestions(
-    user: super::oauth::TokenClaims
-) -> Result<rocket::serde::json::Json<Vec<super::objs::Account>>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<Vec<super::objs::Account>>, super::Error> {
     if !user.has_scope("read") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     Ok(rocket::serde::json::Json(vec![]))
@@ -11,11 +14,17 @@ pub async fn suggestions(
 
 #[delete("/api/v1/suggestions/<_acct_id>")]
 pub async fn delete_suggestion(
-    user: super::oauth::TokenClaims, _acct_id: String
-) -> Result<rocket::serde::json::Json<()>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, _acct_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("read") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    Err(rocket::http::Status::ServiceUnavailable)
+    Err(super::Error {
+        code: rocket::http::Status::ServiceUnavailable,
+        error: fl!(localizer, "service-unavailable")
+    })
 }

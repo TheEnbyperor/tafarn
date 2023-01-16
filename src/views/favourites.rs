@@ -7,21 +7,27 @@ use crate::models;
 pub async fn favourites(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
     limit: Option<u64>, max_id: Option<i32>, min_id: Option<i32>,
-    host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
+    host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     if !user.has_scope("read:favourites") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let limit = limit.unwrap_or(20);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err( super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
 
     let statuses: Vec<(models::Like, models::Status)> =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::likes::dsl::likes.order_by(
                 crate::schema::likes::dsl::iid.desc()
             ).filter(
@@ -62,7 +68,7 @@ pub async fn favourites(
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(
             futures::stream::iter(statuses).map(|status| {
-                super::statuses::render_status(config, &db, status.1, Some(&account))
+                super::statuses::render_status(config, &db, status.1, &localizer, Some(&account))
             }).buffered(10).collect::<Vec<_>>().await
                 .into_iter().collect::<Result<Vec<_>, _>>()?
         ),
@@ -73,23 +79,26 @@ pub async fn favourites(
 #[post("/api/v1/statuses/<status_id>/favourite")]
 pub async fn like_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:favourites") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    if crate::db_run(&db, move |c| -> QueryResult<_> {
+    if crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::likes::dsl::likes.filter(
             crate::schema::likes::dsl::status.eq(status.id)
         ).filter(
             crate::schema::likes::dsl::account.eq(&account.id)
         ).count().get_result::<i64>(c)
     }).await? > 0 {
-        return Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, Some(&account)).await?));
+        return Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, &localizer, Some(&account)).await?));
     }
 
     let new_like = models::NewLike {
@@ -101,7 +110,7 @@ pub async fn like_status(
         local: true,
         url: None,
     };
-    let like = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let like = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::insert_into(crate::schema::likes::dsl::likes)
             .values(new_like)
             .get_result::<models::Like>(c)
@@ -113,26 +122,32 @@ pub async fn like_status(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
-    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, &localizer, Some(&account)).await?))
 }
 
 #[post("/api/v1/statuses/<status_id>/unfavourite")]
 pub async fn unlike_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:favourites") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    if let Some(like) = crate::db_run(&db, move |c| -> QueryResult<_> {
+    if let Some(like) = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::likes::dsl::likes.filter(
             crate::schema::likes::dsl::status.eq(status.id)
         ).filter(
@@ -140,7 +155,7 @@ pub async fn unlike_status(
         ).get_result::<models::Like>(c).optional()
     }).await? {
         let like_id = like.id;
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             diesel::delete(crate::schema::likes::dsl::likes.find(like_id))
                 .execute(c)
         }).await?;
@@ -151,10 +166,13 @@ pub async fn unlike_status(
             Ok(_) => {}
             Err(err) => {
                 error!("Failed to submit celery task: {:?}", err);
-                return Err(rocket::http::Status::InternalServerError);
+                return Err(super::Error {
+                    code: rocket::http::Status::InternalServerError,
+                    error: fl!(localizer, "internal-server-error")
+                });
             }
         };
     }
 
-    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, &localizer, Some(&account)).await?))
 }

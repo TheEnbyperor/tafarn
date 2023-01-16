@@ -25,14 +25,17 @@ pub mod objs;
 pub mod activity_streams;
 pub mod nodeinfo;
 
-pub fn parse_bool(s: Option<&str>, default: bool) -> Result<bool, rocket::http::Status> {
+pub fn parse_bool(s: Option<&str>, default: bool, localizer: &crate::i18n::Localizer) -> Result<bool, Error> {
     Ok(match s {
         None => default,
         Some("true") => true,
         Some("1") => true,
         Some("0") => false,
         Some("false") => false,
-        _ => return Err(rocket::http::Status::BadRequest)
+        _ => return Err(Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "invalid-request")
+        })
     })
 }
 
@@ -62,5 +65,35 @@ impl <'r, 'o: 'r, T: rocket::response::Responder<'r, 'o>> rocket::response::Resp
             response.set_raw_header("Link", links.join(", "));
         }
         Ok(response)
+    }
+}
+
+pub struct Error {
+    pub code: rocket::http::Status,
+    pub error: String,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String
+}
+
+impl <'r, 'o: 'r> rocket::response::Responder<'r, 'o> for Error {
+    fn respond_to(self, _: &'r Request<'_>) -> rocket::response::Result<'o> {
+        let body = serde_json::to_vec(&ErrorResponse {
+            error: self.error
+        }).unwrap();
+
+        rocket::Response::build()
+            .status(self.code)
+            .sized_body(body.len(), std::io::Cursor::new(body))
+            .header(rocket::http::ContentType::JSON)
+            .ok()
+    }
+}
+
+impl From<Error> for rocket::http::Status {
+    fn from(from: Error) -> rocket::http::Status {
+        from.code
     }
 }

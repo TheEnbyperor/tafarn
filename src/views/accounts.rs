@@ -5,9 +5,9 @@ use futures::StreamExt;
 use crate::models;
 use crate::views::parse_bool;
 
-pub async fn get_account(db: &crate::DbConn, user: &super::oauth::TokenClaims) -> Result<crate::models::Account, rocket::http::Status> {
+pub async fn get_account(db: &crate::DbConn, localizer: &crate::i18n::Localizer, user: &super::oauth::TokenClaims) -> Result<models::Account, super::Error> {
     let sub = user.subject.clone();
-    crate::db_run(db, move |c| -> QueryResult<_> {
+    crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::owned_by.eq(sub)
         ).first(c)
@@ -15,10 +15,11 @@ pub async fn get_account(db: &crate::DbConn, user: &super::oauth::TokenClaims) -
 }
 
 pub async fn init_account(
-    db: crate::DbConn, user: &super::oidc::OIDCIdTokenClaims, langs: &crate::i18n::Languages
-) -> Result<(), rocket::http::Status> {
+    db: crate::DbConn, user: &super::oidc::OIDCIdTokenClaims, langs: &crate::i18n::Languages,
+    localizer: &crate::i18n::Localizer
+) -> Result<(), super::Error> {
     let sub = user.subject().to_string();
-    let account = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let account = crate::db_run(&db, localizer, move |c| -> QueryResult<_> {
         Ok(crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::owned_by.eq(sub)
         ).count().get_result::<i64>(c)? > 0)
@@ -28,7 +29,7 @@ pub async fn init_account(
         let pref = user.preferred_username().map(|u| u.to_string())
             .or(user.given_name().and_then(|g| g.get(None)).map(|g| g.to_string().to_lowercase()))
             .unwrap_or_else(|| user.subject().to_string());
-        let username = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let username = crate::db_run(&db, localizer, move |c| -> QueryResult<_> {
             if crate::schema::accounts::dsl::accounts.filter(
                 crate::schema::accounts::dsl::username.eq(&pref)
             ).filter(
@@ -55,13 +56,19 @@ pub async fn init_account(
                 Ok(k) => k,
                 Err(e) => {
                     error!("Unable to generate RSA key: {}", e);
-                    return Err(rocket::http::Status::InternalServerError);
+                    return Err(super::Error {
+                        code: rocket::http::Status::InternalServerError,
+                        error: fl!(localizer, "internal-server-error")
+                    });
                 }
             }.private_key_to_pem() {
                 Ok(k) => k,
                 Err(e) => {
                     error!("Unable to convert RSA key to PEM: {}", e);
-                    return Err(rocket::http::Status::InternalServerError);
+                    return Err(super::Error {
+                        code: rocket::http::Status::InternalServerError,
+                        error: fl!(localizer, "internal-server-error")
+                    });
                 }
             }
         ).unwrap();
@@ -99,7 +106,7 @@ pub async fn init_account(
             header_remote_url: None,
             follower_collection_url: None,
         };
-        crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+        crate::db_run(&db, localizer, move |c| -> diesel::result::QueryResult<_> {
             diesel::insert_into(crate::schema::accounts::table)
                 .values(account)
                 .execute(c)
@@ -110,9 +117,9 @@ pub async fn init_account(
 }
 
 pub async fn render_account(
-    config: &crate::AppConfig, db: &crate::DbConn, account: crate::models::Account
-) -> Result<super::objs::Account, rocket::http::Status> {
-    let fields: Vec<crate::models::AccountField> = crate::db_run(db, move |c| -> QueryResult<_> {
+    config: &crate::AppConfig, db: &crate::DbConn, localizer: &crate::i18n::Localizer, account: models::Account
+) -> Result<super::objs::Account, super::Error> {
+    let fields: Vec<models::AccountField> = crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::account_fields::dsl::account_fields.filter(
             crate::schema::account_fields::dsl::account_id.eq(account.id)
         ).order_by(crate::schema::account_fields::dsl::sort_order.asc()).get_results(c)
@@ -123,7 +130,7 @@ pub async fn render_account(
     );
 
     let follower_count = if account.local {
-        crate::db_run(db, move |c| -> QueryResult<_> {
+        crate::db_run(db, localizer, move |c| -> QueryResult<_> {
             crate::schema::following::dsl::following.filter(
                 crate::schema::following::dsl::followee.eq(account.id).and(
                     crate::schema::following::dsl::pending.eq(false)
@@ -135,7 +142,7 @@ pub async fn render_account(
     };
 
     let following_count = if account.local {
-        crate::db_run(db, move |c| -> QueryResult<_> {
+        crate::db_run(db, localizer, move |c| -> QueryResult<_> {
             crate::schema::following::dsl::following.filter(
                 crate::schema::following::dsl::follower.eq(account.id).and(
                     crate::schema::following::dsl::pending.eq(false)
@@ -200,13 +207,17 @@ pub async fn render_account(
 
 #[get("/api/v1/accounts/verify_credentials")]
 pub async fn verify_credentials(
-    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims
-) -> Result<rocket::serde::json::Json<super::objs::CredentialAccount>, rocket::http::Status> {
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::CredentialAccount>, super::Error> {
     if !user.has_scope("read:accounts") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = get_account(&db, &user).await?;
+    let account = get_account(&db, &localizer, &user).await?;
 
     Ok(rocket::serde::json::Json(super::objs::CredentialAccount {
         source: super::objs::AccountSource {
@@ -217,19 +228,22 @@ pub async fn verify_credentials(
             language: "en".to_string(),
             follow_requests_count: 0
         },
-        base: render_account(config, &db, account).await?,
+        base: render_account(config, &db, &localizer, account).await?,
     }))
 }
 
 #[get("/api/v1/preferences")]
 pub async fn user_preferences(
-    db: crate::DbConn, user: super::oauth::TokenClaims
-) -> Result<rocket::serde::json::Json<super::objs::Preferences>, rocket::http::Status> {
+    db: crate::DbConn, user: super::oauth::TokenClaims, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Preferences>, super::Error> {
     if !user.has_scope("read:accounts") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = get_account(&db, &user).await?;
+    let account = get_account(&db, &localizer, &user).await?;
 
     Ok(rocket::serde::json::Json(super::objs::Preferences {
         default_visibility: Some(super::objs::StatusVisibility::Public),
@@ -270,13 +284,17 @@ pub struct AccountUpdateFieldForm {
 #[patch("/api/v1/accounts/update_credentials", data = "<form>")]
 pub async fn update_credentials(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    form: rocket::form::Form<AccountUpdateForm<'_>>, celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
+    form: rocket::form::Form<AccountUpdateForm<'_>>, celery: &rocket::State<crate::CeleryApp>,
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Account>, super::Error> {
     if !user.has_scope("write:accounts") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = get_account(&db, &user).await?;
+    let account = get_account(&db, &localizer, &user).await?;
 
     use crate::schema::accounts;
     #[derive(AsChangeset)]
@@ -295,11 +313,18 @@ pub async fn update_credentials(
         header_content_type: Option<&'a str>,
     }
 
-    if let Some(default_language) = &form.source.language {
-        if default_language.len() != 2 {
-            return Err(rocket::http::Status::BadRequest);
-        }
-    }
+    let default_language = match &form.source.language {
+        Some(l) => {
+            match l.parse::<i18n_embed::unic_langid::LanguageIdentifier>() {
+                Ok(l) => Some(l.language.as_str().to_string()),
+                Err(_) => return Err(super::Error {
+                    code: rocket::http::Status::BadRequest,
+                    error: fl!(localizer, "error-invalid-language")
+                })
+            }
+        },
+        None => None
+    };
 
     let mut upd = AccountUpdate {
         display_name: form.display_name.as_ref().map(|x| x.to_string()),
@@ -308,7 +333,7 @@ pub async fn update_credentials(
         bot: form.bot,
         discoverable: form.discoverable,
         default_sensitive: form.source.sensitive,
-        default_language: form.source.language.as_ref().map(|x| x.to_string()),
+        default_language,
         avatar_file: None,
         avatar_content_type: None,
         header_file: None,
@@ -319,28 +344,52 @@ pub async fn update_credentials(
         let format = match avatar.content_type() {
             Some(f) => match image::ImageFormat::from_mime_type(f.to_string()) {
                 Some(f) => f,
-                None => return Err(rocket::http::Status::UnprocessableEntity)
+                None => return Err(super::Error {
+                    code: rocket::http::Status::UnprocessableEntity,
+                    error: fl!(localizer, "unsupported-media-type")
+                })
             },
-            None => return Err(rocket::http::Status::BadRequest)
+            None => return Err(super::Error {
+                code: rocket::http::Status::BadRequest,
+                error: fl!(localizer, "invalid-request")
+            })
         };
         match format {
             image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::Gif => {},
-            _ => return Err(rocket::http::Status::UnprocessableEntity)
+            _ => return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "unsupported-media-type")
+            })
         }
         let mut image_r = image::io::Reader::open(match avatar.path() {
             Some(p) => p,
-            None => return Err(rocket::http::Status::InternalServerError)
-        }).map_err(|e| rocket::http::Status::InternalServerError)?;
+            None => return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })
+        }).map_err(|e| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
         image_r.set_format(format);
-        let mut image = image_r.decode().map_err(|e| rocket::http::Status::BadRequest)?;
+        let mut image = image_r.decode().map_err(|e| super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "failed-to-decode-image")
+        })?;
         image = image.resize_to_fill(crate::AVATAR_SIZE, crate::AVATAR_SIZE, image::imageops::FilterType::Lanczos3);
         let mut out_image_bytes: Vec<u8> = Vec::new();
         image.write_to(&mut std::io::Cursor::new(&mut out_image_bytes), image::ImageOutputFormat::Png)
-            .map_err(|_| rocket::http::Status::InternalServerError)?;
+            .map_err(|_| super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })?;
         let image_id = uuid::Uuid::new_v4();
         let image_name = format!("{}.png", image_id.to_string());
         let image_path = format!("./media/{}", image_name);
-        std::fs::write(&image_path, &out_image_bytes).map_err(|_| rocket::http::Status::InternalServerError)?;
+        std::fs::write(&image_path, &out_image_bytes).map_err(|_| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
         upd.avatar_file = Some(image_name);
         upd.avatar_content_type = Some("image/png");
     }
@@ -349,28 +398,52 @@ pub async fn update_credentials(
         let format = match header.content_type() {
             Some(f) => match image::ImageFormat::from_mime_type(f.to_string()) {
                 Some(f) => f,
-                None => return Err(rocket::http::Status::BadRequest)
+                None => return Err(super::Error {
+                    code: rocket::http::Status::UnprocessableEntity,
+                    error: fl!(localizer, "unsupported-media-type")
+                })
             },
-            None => return Err(rocket::http::Status::BadRequest)
+            None => return Err(super::Error {
+                code: rocket::http::Status::BadRequest,
+                error: fl!(localizer, "invalid-request")
+            })
         };
         match format {
             image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::Gif => {},
-            _ => return Err(rocket::http::Status::BadRequest)
+            _ => return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "unsupported-media-type")
+            })
         }
         let mut image_r = image::io::Reader::open(match header.path() {
             Some(p) => p,
-            None => return Err(rocket::http::Status::InternalServerError)
-        }).map_err(|e| rocket::http::Status::InternalServerError)?;
+            None => return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })
+        }).map_err(|e| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
         image_r.set_format(format);
-        let mut image = image_r.decode().map_err(|e| rocket::http::Status::BadRequest)?;
+        let mut image = image_r.decode().map_err(|e| super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "failed-to-decode-image")
+        })?;
         image = image.resize_to_fill(crate::HEADER_WIDTH, crate::HEADER_HEIGHT, image::imageops::FilterType::Lanczos3);
         let mut out_image_bytes: Vec<u8> = Vec::new();
         image.write_to(&mut std::io::Cursor::new(&mut out_image_bytes), image::ImageOutputFormat::Png)
-            .map_err(|_| rocket::http::Status::InternalServerError)?;
+            .map_err(|_| super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })?;
         let image_id = uuid::Uuid::new_v4();
         let image_name = format!("{}.png", image_id.to_string());
         let image_path = format!("./media/{}", image_name);
-        std::fs::write(&image_path, &out_image_bytes).map_err(|_| rocket::http::Status::InternalServerError)?;
+        std::fs::write(&image_path, &out_image_bytes).map_err(|_| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
         upd.header_file = Some(image_name);
         upd.header_content_type = Some("image/png");
     }
@@ -385,7 +458,7 @@ pub async fn update_credentials(
         }).collect::<Vec<_>>()
     });
 
-    let account: crate::models::Account = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let account: crate::models::Account = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         c.transaction::<_, _, _>(|| {
             if let Some(attributes) = attributes {
                 diesel::delete(crate::schema::account_fields::table.filter(
@@ -407,26 +480,35 @@ pub async fn update_credentials(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
-    Ok(rocket::serde::json::Json(render_account(config, &db, account).await?))
+    Ok(rocket::serde::json::Json(render_account(config, &db, &localizer, account).await?))
 }
 
-async fn get_account_from_db(account_id: &str, db: &crate::DbConn) -> Result<crate::models::Account, rocket::http::Status> {
+async fn get_account_from_db(account_id: &str, db: &crate::DbConn, localizer: &crate::i18n::Localizer) -> Result<models::Account, super::Error> {
     let account_id = match account_id.parse::<i32>() {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "account-not-found")
+        })
     };
 
-    let account: crate::models::Account = match crate::db_run(db, move |c| -> QueryResult<_> {
+    let account: crate::models::Account = match crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::iid.eq(account_id)
         ).get_result(c).optional()
     }).await? {
         Some(a) => a,
-        None => return Err(rocket::http::Status::NotFound)
+        None => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "account-not-found")
+        })
     };
 
     Ok(account)
@@ -434,11 +516,12 @@ async fn get_account_from_db(account_id: &str, db: &crate::DbConn) -> Result<cra
 
 #[get("/api/v1/accounts/<account_id>")]
 pub async fn account(
-    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String
-) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
-    let account = get_account_from_db(&account_id, &db).await?;
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Account>, super::Error> {
+    let account = get_account_from_db(&account_id, &db, &localizer).await?;
 
-    Ok(rocket::serde::json::Json(render_account(config, &db, account).await?))
+    Ok(rocket::serde::json::Json(render_account(config, &db, &localizer, account).await?))
 }
 
 #[get("/api/v1/accounts/<account_id>/statuses?<limit>&<exclude_replies>&<only_media>&<exclude_reblogs>&<pinned>&<min_id>&<max_id>")]
@@ -448,26 +531,29 @@ pub async fn account_statuses(
     limit: Option<u64>, exclude_replies: Option<&str>, only_media: Option<&str>,
     exclude_reblogs: Option<&str>, pinned: Option<&str>,
     max_id: Option<i32>, min_id: Option<i32>,
-    host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
-    let account = get_account_from_db(&account_id, &db).await?;
+    host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
+    let account = get_account_from_db(&account_id, &db, &localizer).await?;
     let req_account = match &user {
-        Some(u) => Some(get_account(&db, u).await?),
+        Some(u) => Some(get_account(&db, &localizer, u).await?),
         None => None
     };
 
-    let exclude_replies = super::parse_bool(exclude_replies, false)?;
-    let _only_media = super::parse_bool(only_media, false)?;
-    let exclude_reblogs = super::parse_bool(exclude_reblogs, false)?;
-    let pinned = super::parse_bool(pinned, false)?;
+    let exclude_replies = super::parse_bool(exclude_replies, false, &localizer)?;
+    let _only_media = super::parse_bool(only_media, false, &localizer)?;
+    let exclude_reblogs = super::parse_bool(exclude_reblogs, false, &localizer)?;
+    let pinned = super::parse_bool(pinned, false, &localizer)?;
 
     let limit = limit.unwrap_or(20);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let statuses: Vec<crate::models::Status> =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+    let statuses: Vec<models::Status> =
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::statuses::dsl::statuses.order_by(
                 crate::schema::statuses::dsl::created_at.desc()
             ).filter(
@@ -509,7 +595,7 @@ pub async fn account_statuses(
 
     let mut out_statuses = vec![];
     for status in statuses {
-        if super::statuses::can_view(&status, req_account.as_ref(), &db).await? {
+        if super::statuses::can_view(&status, req_account.as_ref(), &db, &localizer).await? {
             out_statuses.push(status);
         }
     }
@@ -532,7 +618,7 @@ pub async fn account_statuses(
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(
             futures::stream::iter(out_statuses).map(|status| {
-                super::statuses::render_status(config, &db, status, req_account.as_ref())
+                super::statuses::render_status(config, &db, status, &localizer, req_account.as_ref())
             }).buffered(10).collect::<Vec<_>>().await
                 .into_iter().collect::<Result<Vec<_>, _>>()?
         ),
@@ -544,15 +630,19 @@ pub async fn account_statuses(
 pub async fn account_followers(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
     limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, rocket::http::Status> {
-    let account = get_account_from_db(&account_id, &db).await?;
+    localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, super::Error> {
+    let account = get_account_from_db(&account_id, &db, &localizer).await?;
 
     let limit = limit.unwrap_or(40);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let followers: Vec<crate::models::Account> = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let followers: Vec<crate::models::Account> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let mut sel = crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::id.eq_any(
                 crate::schema::following::dsl::following.select(crate::schema::following::dsl::follower).filter(
@@ -588,7 +678,7 @@ pub async fn account_followers(
 
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(futures::future::try_join_all(
-            followers.into_iter().map(|a| render_account(config, &db, a)).collect::<Vec<_>>()
+            followers.into_iter().map(|a| render_account(config, &db, &localizer, a)).collect::<Vec<_>>()
         ).await?),
         links,
     })
@@ -597,16 +687,19 @@ pub async fn account_followers(
 #[get("/api/v1/accounts/<account_id>/following?<limit>")]
 pub async fn account_following(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
-    limit: Option<usize>
-) -> Result<rocket::serde::json::Json<Vec<super::objs::Account>>, rocket::http::Status> {
-    let account = get_account_from_db(&account_id, &db).await?;
+    limit: Option<usize>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<Vec<super::objs::Account>>, super::Error> {
+    let account = get_account_from_db(&account_id, &db, &localizer).await?;
 
     let limit = limit.unwrap_or(40);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let following: Vec<crate::models::Account> = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let following: Vec<models::Account> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::id.eq_any(
                 crate::schema::following::dsl::following.select(crate::schema::following::dsl::followee).filter(
@@ -619,31 +712,34 @@ pub async fn account_following(
     }).await?;
 
     Ok(rocket::serde::json::Json(futures::future::try_join_all(
-        following.into_iter().map(|a| render_account(config, &db, a)).collect::<Vec<_>>()
+        following.into_iter().map(|a| render_account(config, &db, &localizer, a)).collect::<Vec<_>>()
     ).await?))
 }
 
 #[get("/api/v1/accounts/<account_id>/lists")]
 pub async fn lists(
     db: crate::DbConn, _config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    account_id: String
-) -> Result<rocket::serde::json::Json<Vec<super::objs::List>>, rocket::http::Status> {
+    account_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<Vec<super::objs::List>>, super::Error> {
     if !user.has_scope("read:lists") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let _account = get_account_from_db(&account_id, &db).await?;
+    let _account = get_account_from_db(&account_id, &db, &localizer).await?;
 
     Ok(rocket::serde::json::Json(vec![]))
 }
 
 async fn render_relationship<'a>(
-    db: &'a crate::DbConn, own_account: &'a crate::models::Account,
-    other_account: std::borrow::Cow<'a, crate::models::Account>,
-) -> Result<super::objs::Relationship, rocket::http::Status> {
+    db: &'a crate::DbConn, localizer: &crate::i18n::Localizer, own_account: &'a models::Account,
+    other_account: std::borrow::Cow<'a, models::Account>,
+) -> Result<super::objs::Relationship, super::Error> {
     let own_account_id = own_account.id;
     let other_account_id = other_account.id;
-    let following = crate::db_run(db, move |c| -> QueryResult<_> {
+    let following = crate::db_run(db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::follower.eq(own_account_id).and(
                 crate::schema::following::dsl::followee.eq(other_account_id)
@@ -652,7 +748,7 @@ async fn render_relationship<'a>(
             )
         ).get_result::<models::Following>(c).optional()
     }).await?;
-    let following_pending = crate::db_run(db, move |c| -> QueryResult<_> {
+    let following_pending = crate::db_run(db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::follower.eq(own_account_id).and(
                 crate::schema::following::dsl::followee.eq(other_account_id)
@@ -661,7 +757,7 @@ async fn render_relationship<'a>(
             )
         ).count().get_result::<i64>(c)
     }).await?;
-    let followed_by = crate::db_run(db, move |c| -> QueryResult<_> {
+    let followed_by = crate::db_run(db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::followee.eq(own_account_id).and(
                 crate::schema::following::dsl::follower.eq(other_account_id)
@@ -670,7 +766,7 @@ async fn render_relationship<'a>(
             )
         ).count().get_result::<i64>(c)
     }).await?;
-    let note: Option<crate::models::AccountNote> = crate::db_run(db, move |c| -> QueryResult<_> {
+    let note: Option<models::AccountNote> = crate::db_run(db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::account_notes::dsl::account_notes.filter(
             crate::schema::account_notes::dsl::account.eq(other_account_id)
         ).filter(
@@ -699,31 +795,37 @@ async fn render_relationship<'a>(
 #[get("/api/v1/accounts/relationships?<id>")]
 pub async fn relationships(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    id: Vec<String>
-) -> Result<rocket::serde::json::Json<Vec<super::objs::Relationship>>, rocket::http::Status> {
+    id: Vec<String>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<Vec<super::objs::Relationship>>, super::Error> {
     if !user.has_scope("read:follows") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let ids = match id.into_iter()
         .map(|id| id.parse::<i32>())
         .collect::<Result<Vec<_>, _>>() {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "account-not-found")
+        })
     };
 
     let accounts = futures::stream::iter(ids.into_iter().map(|id| {
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::accounts::dsl::accounts.filter(
                 crate::schema::accounts::dsl::iid.eq(id)
-            ).first::<crate::models::Account>(c)
+            ).first::<models::Account>(c)
         })
     })).buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?;
 
-    let account = get_account(&db, &user).await?;
+    let account = get_account(&db, &localizer, &user).await?;
 
     let relationships = futures::stream::iter(accounts.into_iter())
-        .map(|acct| render_relationship(&db, &account, std::borrow::Cow::Owned(acct)))
+        .map(|acct| render_relationship(&db, &localizer, &account, std::borrow::Cow::Owned(acct)))
         .buffer_unordered(10).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     Ok(rocket::serde::json::Json(relationships))
@@ -732,22 +834,28 @@ pub async fn relationships(
 #[get("/api/v1/accounts/familiar_followers?<id>")]
 pub async fn familiar_followers(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    id: Vec<String>
-) -> Result<rocket::serde::json::Json<Vec<super::objs::FamiliarFollowers>>, rocket::http::Status> {
+    id: Vec<String>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<Vec<super::objs::FamiliarFollowers>>, super::Error> {
     if !user.has_scope("read:follows") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let ids = match id.into_iter()
         .map(|id| uuid::Uuid::parse_str(&id))
         .collect::<Result<Vec<_>, _>>() {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "account-not-found")
+        })
     };
 
-    let account = get_account(&db, &user).await?;
+    let account = get_account(&db, &localizer, &user).await?;
 
-    let account_followers: Vec<uuid::Uuid> = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let account_followers: Vec<uuid::Uuid> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::followee.eq(&account.id).and(
                 crate::schema::following::dsl::pending.eq(false)
@@ -758,7 +866,7 @@ pub async fn familiar_followers(
     let mut familiar_followers = vec![];
     for id in ids {
         let f = account_followers.clone();
-        let followed_by: Vec<_> = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let followed_by: Vec<_> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::accounts::dsl::accounts.filter(
                 crate::schema::accounts::dsl::id.eq_any(
                     crate::schema::following::dsl::following.select(
@@ -771,13 +879,13 @@ pub async fn familiar_followers(
                         )
                     )
                 )
-            ).get_results::<crate::models::Account>(c)
+            ).get_results::<models::Account>(c)
         }).await?;
 
         familiar_followers.push(super::objs::FamiliarFollowers {
             id: id.to_string(),
             accounts: futures::future::try_join_all(
-                followed_by.into_iter().map(|a| render_account(config, &db, a)).collect::<Vec<_>>()
+                followed_by.into_iter().map(|a| render_account(config, &db, &localizer, a)).collect::<Vec<_>>()
             ).await?
         });
     }
@@ -796,26 +904,29 @@ pub struct FollowAccountForm<'a> {
 pub async fn follow_account(
     db: crate::DbConn, user: super::oauth::TokenClaims, account_id: String,
     celery: &rocket::State<crate::CeleryApp>,
-    form: Option<rocket::form::Form<FollowAccountForm<'_>>>
-) -> Result<rocket::serde::json::Json<super::objs::Relationship>, rocket::http::Status> {
+    form: Option<rocket::form::Form<FollowAccountForm<'_>>>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Relationship>, super::Error> {
     if !user.has_scope("write:follows") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let reblogs = parse_bool(form.as_ref().and_then(|f| f.reblogs), true)?;
-    let notify = parse_bool(form.as_ref().and_then(|f| f.notify), false)?;
+    let reblogs = parse_bool(form.as_ref().and_then(|f| f.reblogs), true, &localizer)?;
+    let notify = parse_bool(form.as_ref().and_then(|f| f.notify), false, &localizer)?;
 
-    let account = get_account(&db, &user).await?;
-    let followed_account = get_account_from_db(&account_id, &db).await?;
+    let account = get_account(&db, &localizer, &user).await?;
+    let followed_account = get_account_from_db(&account_id, &db, &localizer).await?;
 
-    if crate::db_run(&db, move |c| -> QueryResult<_> {
+    if crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::follower.eq(&account.id).and(
                 crate::schema::following::dsl::followee.eq(&followed_account.id)
             )
         ).count().get_result::<i64>(c)
     }).await? > 0 {
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             diesel::update(crate::schema::following::table).filter(
                 crate::schema::following::dsl::follower.eq(&account.id).and(
                 crate::schema::following::dsl::followee.eq(&followed_account.id))
@@ -825,19 +936,19 @@ pub async fn follow_account(
             )).execute(c)
         }).await?;
 
-        return render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account))
+        return render_relationship(&db, &localizer, &account, std::borrow::Cow::Borrowed(&followed_account))
             .await.map(rocket::serde::json::Json);
     }
 
     let mut relationship =
-        render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account)).await?;
+        render_relationship(&db, &localizer, &account, std::borrow::Cow::Borrowed(&followed_account)).await?;
     relationship.following = !followed_account.locked;
     relationship.requested = followed_account.locked;
 
     let following_id = uuid::Uuid::new_v4();
     let created = Utc::now();
 
-    crate::db_run(&db, move |c| -> QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::insert_into(crate::schema::following::dsl::following).values(
             models::NewFollowing {
                 id: following_id.clone(),
@@ -857,7 +968,10 @@ pub async fn follow_account(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
@@ -867,16 +981,19 @@ pub async fn follow_account(
 #[post("/api/v1/accounts/<account_id>/unfollow")]
 pub async fn unfollow_account(
     db: crate::DbConn, user: super::oauth::TokenClaims, account_id: String,
-    celery: &rocket::State<crate::CeleryApp>
-) -> Result<rocket::serde::json::Json<super::objs::Relationship>, rocket::http::Status> {
+    celery: &rocket::State<crate::CeleryApp>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Relationship>, super::Error> {
     if !user.has_scope("write:follows") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        });
     }
 
-    let account = get_account(&db, &user).await?;
-    let followed_account = get_account_from_db(&account_id, &db).await?;
+    let account = get_account(&db, &localizer, &user).await?;
+    let followed_account = get_account_from_db(&account_id, &db, &localizer).await?;
 
-    let following = match crate::db_run(&db, move |c| -> QueryResult<_> {
+    let following = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::following::dsl::following.filter(
             crate::schema::following::dsl::follower.eq(&account.id).and(
                 crate::schema::following::dsl::followee.eq(followed_account.id)
@@ -884,12 +1001,12 @@ pub async fn unfollow_account(
         ).get_result::<crate::models::Following>(c).optional()
     }).await? {
         Some(f) => f,
-        None => return render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account))
+        None => return render_relationship(&db, &localizer, &account, std::borrow::Cow::Borrowed(&followed_account))
             .await.map(rocket::serde::json::Json)
     };
 
     let mut relationship =
-        render_relationship(&db, &account, std::borrow::Cow::Borrowed(&followed_account)).await?;
+        render_relationship(&db, &localizer, &account, std::borrow::Cow::Borrowed(&followed_account)).await?;
     relationship.following = false;
     relationship.requested = false;
 
@@ -899,7 +1016,10 @@ pub async fn unfollow_account(
         Ok(_) => {}
         Err(err) => {
             error!("Failed to submit celery task: {:?}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            });
         }
     };
 
@@ -914,10 +1034,13 @@ pub struct NoteForm<'a> {
 #[post("/api/v1/accounts/<account_id>/note", data = "<form>")]
 pub async fn note(
     db: crate::DbConn, user: super::oauth::TokenClaims, account_id: String,
-    form: Option<rocket::form::Form<NoteForm<'_>>>
-) -> Result<rocket::serde::json::Json<super::objs::Relationship>, rocket::http::Status> {
+    form: Option<rocket::form::Form<NoteForm<'_>>>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Relationship>, super::Error> {
     if !user.has_scope("write:accounts") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        });
     }
 
     let note = match form {
@@ -935,12 +1058,12 @@ pub async fn note(
         None => None,
     };
 
-    let account = get_account(&db, &user).await?;
-    let note_account = get_account_from_db(&account_id, &db).await?;
+    let account = get_account(&db, &localizer, &user).await?;
+    let note_account = get_account_from_db(&account_id, &db, &localizer).await?;
 
     match note {
         Some(note) => {
-            crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                 diesel::insert_into(crate::schema::account_notes::dsl::account_notes).values(
                     crate::models::AccountNote {
                         account: note_account.id,
@@ -955,7 +1078,7 @@ pub async fn note(
             }).await?;
         },
         None => {
-            crate::db_run(&db, move |c| -> QueryResult<_> {
+            crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                 diesel::delete(
                     crate::schema::account_notes::dsl::account_notes.filter(
                         crate::schema::account_notes::dsl::account.eq(note_account.id)
@@ -967,7 +1090,7 @@ pub async fn note(
         }
     }
 
-    let relationship = render_relationship(&db, &account, std::borrow::Cow::Borrowed(&note_account)).await?;
+    let relationship = render_relationship(&db, &localizer, &account, std::borrow::Cow::Borrowed(&note_account)).await?;
 
     Ok(rocket::serde::json::Json(relationship))
 }
@@ -975,13 +1098,14 @@ pub async fn note(
 
 #[get("/api/v1/accounts/lookup?<acct>")]
 pub async fn lookup_account(
-    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, acct: String
-) -> Result<rocket::serde::json::Json<super::objs::Account>, rocket::http::Status> {
+    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, acct: String,
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Account>, super::Error> {
     let acct = if let Some(cap) = crate::WEBFINGER_RE.captures(&acct) {
         let domain = cap.name("domain").unwrap().as_str().to_string();
         let acct = cap.name("user").unwrap().as_str().to_string();
 
-        let accts: Vec<models::Account> = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let accts: Vec<models::Account> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::accounts::dsl::accounts.filter(
                 crate::schema::accounts::dsl::username.eq(acct)
             ).filter(
@@ -998,16 +1122,22 @@ pub async fn lookup_account(
             } else {
                 false
             }
-        }).ok_or(rocket::http::Status::NotFound)?
+        }).ok_or(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "account-not-found")
+        })?
     } else {
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::accounts::dsl::accounts.filter(
                 crate::schema::accounts::dsl::username.eq(acct)
             ).filter(
                 crate::schema::accounts::dsl::local.eq(true)
             ).get_result(c).optional()
-        }).await?.ok_or(rocket::http::Status::NotFound)?
+        }).await?.ok_or(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "account-not-found")
+        })?
     };
 
-    render_account(config, &db, acct).await.map(rocket::serde::json::Json)
+    render_account(config, &db, &localizer, acct).await.map(rocket::serde::json::Json)
 }

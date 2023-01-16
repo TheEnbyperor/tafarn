@@ -1,9 +1,12 @@
 #[get("/api/v1/filters")]
 pub async fn filters(
-    user: super::oauth::TokenClaims
-) -> Result<rocket::serde::json::Json<Vec<super::objs::Filter>>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, localizer: crate::i18n::Localizer,
+) -> Result<rocket::serde::json::Json<Vec<super::objs::Filter>>, super::Error> {
     if !user.has_scope("read:filters") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     Ok(rocket::serde::json::Json(vec![]))
@@ -32,21 +35,31 @@ pub enum FilterContexts {
 
 #[post("/api/v1/filters", data = "<_form>")]
 pub async fn create_filter(
-    user: super::oauth::TokenClaims, _form: rocket::form::Form<FilterCreateForm>
-) -> Result<rocket::serde::json::Json<super::objs::Filter>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, _form: rocket::form::Form<FilterCreateForm>,
+    localizer: crate::i18n::Localizer,
+) -> Result<rocket::serde::json::Json<super::objs::Filter>, super::Error> {
     if !user.has_scope("write:filters") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    Err(rocket::http::Status::ServiceUnavailable)
+    Err(super::Error {
+        code: rocket::http::Status::ServiceUnavailable,
+        error: fl!(localizer, "service-unavailable")
+    })
 }
 
 #[get("/api/v1/filters/<_filter_id>")]
 pub async fn filter(
-    user: super::oauth::TokenClaims, _filter_id: String
-) -> Result<rocket::serde::json::Json<super::objs::Filter>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, _filter_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Filter>, super::Error> {
     if !user.has_scope("read:filters") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     Ok(rocket::serde::json::Json(super::objs::Filter {}))
@@ -54,22 +67,35 @@ pub async fn filter(
 
 #[post("/api/v1/filters/<_filter_id>", data = "<_form>")]
 pub async fn update_filter(
-    user: super::oauth::TokenClaims, _filter_id: String, _form: rocket::form::Form<FilterCreateForm>
-) -> Result<rocket::serde::json::Json<super::objs::Filter>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, _filter_id: String, _form: rocket::form::Form<FilterCreateForm>,
+    localizer: crate::i18n::Localizer,
+) -> Result<rocket::serde::json::Json<super::objs::Filter>, super::Error> {
     if !user.has_scope("write:lists") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    Err(rocket::http::Status::ServiceUnavailable)
+    Err(super::Error {
+        code: rocket::http::Status::ServiceUnavailable,
+        error: fl!(localizer, "service-unavailable")
+    })
 }
 
 #[delete("/api/v1/filters/<_filter_id>")]
 pub async fn delete_filter(
-    user: super::oauth::TokenClaims, _filter_id: String
-) -> Result<rocket::serde::json::Json<()>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, _filter_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("write:lists") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    Err(rocket::http::Status::ServiceUnavailable)
+    Err(super::Error {
+        code: rocket::http::Status::ServiceUnavailable,
+        error: fl!(localizer, "service-unavailable")
+    })
 }

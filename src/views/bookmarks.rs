@@ -6,21 +6,27 @@ use crate::models;
 pub async fn bookmarks(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
     limit: Option<u64>, max_id: Option<i32>, min_id: Option<i32>,
-    host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, rocket::http::Status> {
+    host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     if !user.has_scope("read:bookmarks") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let limit = limit.unwrap_or(20);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err( super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
 
     let statuses: Vec<(models::Bookmark, models::Status)> =
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             let mut sel = crate::schema::bookmarks::dsl::bookmarks.order_by(
                 crate::schema::bookmarks::dsl::iid.desc()
             ).filter(
@@ -61,7 +67,7 @@ pub async fn bookmarks(
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(
             futures::stream::iter(statuses).map(|status| {
-                super::statuses::render_status(config, &db, status.1, Some(&account))
+                super::statuses::render_status(config, &db, status.1, &localizer, Some(&account))
             }).buffered(10).collect::<Vec<_>>().await
                 .into_iter().collect::<Result<Vec<_>, _>>()?
         ),
@@ -72,23 +78,26 @@ pub async fn bookmarks(
 #[post("/api/v1/statuses/<status_id>/bookmark")]
 pub async fn bookmark_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:bookmarks") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    if crate::db_run(&db, move |c| -> QueryResult<_> {
+    if crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::bookmarks::dsl::bookmarks.filter(
             crate::schema::bookmarks::dsl::status.eq(status.id)
         ).filter(
             crate::schema::bookmarks::dsl::account.eq(&account.id)
         ).count().get_result::<i64>(c)
     }).await? > 0 {
-        return Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, Some(&account)).await?));
+        return Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, &localizer, Some(&account)).await?));
     }
 
     let new_bookmark = models::NewBookmark {
@@ -96,28 +105,31 @@ pub async fn bookmark_status(
         account: account.id,
         status: status.id,
     };
-    crate::db_run(&db, move |c| -> QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::insert_into(crate::schema::bookmarks::dsl::bookmarks)
             .values(new_bookmark)
             .execute(c)
     }).await?;
 
-    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, &localizer, Some(&account)).await?))
 }
 
 #[post("/api/v1/statuses/<status_id>/unbookmark")]
 pub async fn unbookmark_status(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    status_id: String,
-) -> Result<rocket::serde::json::Json<super::objs::Status>, rocket::http::Status> {
+    status_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Status>, super::Error> {
     if !user.has_scope("write:bookmarks") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let status = super::statuses::get_status_and_check_visibility(&status_id, Some(&account), &db, &localizer).await?;
 
-    crate::db_run(&db, move |c| -> QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::delete(crate::schema::bookmarks::dsl::bookmarks.filter(
             crate::schema::bookmarks::dsl::status.eq(status.id)
         ).filter(
@@ -125,5 +137,5 @@ pub async fn unbookmark_status(
         )).execute(c)
     }).await?;
 
-    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, Some(&account)).await?))
+    Ok(rocket::serde::json::Json(super::statuses::render_status(config, &db, status, &localizer, Some(&account)).await?))
 }

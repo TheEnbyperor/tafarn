@@ -5,18 +5,24 @@ use chrono::prelude::*;
 pub async fn search(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
     user: Option<super::oauth::TokenClaims>, q: String, limit: Option<u64>, offset: Option<u64>,
-    following: Option<&str>, resolve: Option<&str>, r#type: Option<&str>
-) -> Result<rocket::serde::json::Json<super::objs::Search>, rocket::http::Status> {
+    following: Option<&str>, resolve: Option<&str>, r#type: Option<&str>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Search>, super::Error> {
     let limit = limit.unwrap_or(20);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
-    let following = super::parse_bool(following, false)?;
-    let resolve = super::parse_bool(resolve, false)?;
+    let following = super::parse_bool(following, false, &localizer)?;
+    let resolve = super::parse_bool(resolve, false, &localizer)?;
 
     if resolve {
         if user.is_none() {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         }
 
         if let Some((domain, q)) = if let Ok(url) = url::Url::parse(&q) {
@@ -41,7 +47,7 @@ pub async fn search(
                         ).await {
                             Ok(Some(account)) => {
                                 return Ok(rocket::serde::json::Json(super::objs::Search {
-                                    accounts: vec![super::accounts::render_account(config, &db, account).await?],
+                                    accounts: vec![super::accounts::render_account(config, &db, &localizer, account).await?],
                                     hashtags: vec![],
                                     statuses: vec![]
                                 }));
@@ -60,9 +66,12 @@ pub async fn search(
     let account = match &user {
         Some(user) => {
             if !user.has_scope("read:search") {
-                return Err(rocket::http::Status::Forbidden);
+                return Err(super::Error {
+                    code: rocket::http::Status::Forbidden,
+                    error: fl!(localizer, "error-no-permission")
+                });
             }
-            Some(super::accounts::get_account(&db, user).await?)
+            Some(super::accounts::get_account(&db, &localizer, user).await?)
         },
         None => None,
     };
@@ -73,14 +82,17 @@ pub async fn search(
             None
         },
         None => if following {
-            return Err(rocket::http::Status::Forbidden);
+            return Err(super::Error {
+                code: rocket::http::Status::Forbidden,
+                error: fl!(localizer, "error-no-permission")
+            });
         } else {
             None
         }
     };
 
     let accounts: Vec<crate::models::Account> = if r#type.is_none() || r#type == Some("accounts") {
-        crate::db_run(&db, move |c| -> QueryResult<_> {
+        crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             let q = q.replace("%", "\\%").replace("_", "\\_");
             let ilike = format!("%{}%", q);
             let ilike_sort = format!("{}%", q);
@@ -111,7 +123,7 @@ pub async fn search(
 
     Ok(rocket::serde::json::Json(super::objs::Search {
         accounts: futures::future::try_join_all(
-            accounts.into_iter().map(|a| super::accounts::render_account(config, &db, a)).collect::<Vec<_>>()
+            accounts.into_iter().map(|a| super::accounts::render_account(config, &db, &localizer, a)).collect::<Vec<_>>()
         ).await?,
         hashtags: vec![],
         statuses: vec![],

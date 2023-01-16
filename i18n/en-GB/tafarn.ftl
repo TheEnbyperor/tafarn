@@ -3,6 +3,10 @@ favourite-notification = {$name} favourited your toot
 reblog-notification = {$name} boosted your toot
 mention-notification = {$name} mentioned you
 
+invalid-client-name = Invalid client name
+invalid-website = Invalid website
+invalid-scope = Invalid scope
+
 invalid-request = Invalid request
 client-not-found = Client not found
 invalid-redirect-uri = Invalid redirect URI
@@ -45,3 +49,19 @@ scope-write-reports = Submit abuse reports
 scope-write-statuses = Post statuses
 scope-follow = Manage relationships with other accounts
 scope-push = Access to push notifications
+
+error-no-permission = You do not have permission to perform this action
+account-not-found = Account not found
+error-status-not-found = Toot not found
+error-notification-not-found = Notification not found
+unsupported-media-type = Unsupported media type
+internal-server-error = Internal server error
+failed-to-decode-image = Failed to read image
+error-media-not-found = Media not found
+error-db = Database error
+error-invalid-language = Invalid language
+limit-too-large = Limit too large
+error-invalid-visibility = Invalid toot visibility
+error-invalid-status = Invalid toot
+service-unavailable = Service unavailable
+status-deleted = Toot deleted

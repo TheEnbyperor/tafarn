@@ -24,18 +24,27 @@ pub struct MediaForm<'a> {
 #[post("/api/v1/media", data = "<form>")]
 pub async fn upload_media(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    mut form: rocket::form::Form<MediaForm<'_>>,
-) -> Result<rocket::serde::json::Json<super::objs::MediaAttachment>, rocket::http::Status> {
+    mut form: rocket::form::Form<MediaForm<'_>>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::MediaAttachment>, super::Error> {
     if !user.has_scope("write:media") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let format = match form.file.content_type() {
         Some(f) => match image::ImageFormat::from_mime_type(f.to_string()) {
             Some(f) => f,
-            None => return Err(rocket::http::Status::UnprocessableEntity)
+            None => return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "unsupported-media-type")
+            })
         },
-        None => return Err(rocket::http::Status::BadRequest)
+        None => return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "invalid-request")
+        })
     };
 
     let attachment_id = uuid::Uuid::new_v4();
@@ -48,12 +57,21 @@ pub async fn upload_media(
 
     let mut image_r = image::io::Reader::open(match form.file.path() {
         Some(p) => p,
-        None => return Err(rocket::http::Status::InternalServerError)
-    }).map_err(|_| rocket::http::Status::InternalServerError)?;
+        None => return Err(super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })
+    }).map_err(|_| super::Error {
+        code: rocket::http::Status::InternalServerError,
+        error: fl!(localizer, "internal-server-error")
+    })?;
     image_r.set_format(format);
     let image = image_r.decode().map_err(|e| {
         warn!("Failed to decode image: {}", e);
-        rocket::http::Status::UnprocessableEntity
+        super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "failed-to-decode-image")
+        }
     })?;
     let (width, height) = image.dimensions();
     let blurhash = blurhash::encode(4, 3, width, height, &image.to_rgba8().into_vec());
@@ -63,18 +81,39 @@ pub async fn upload_media(
             let preview_format = match thumbnail.content_type() {
                 Some(f) => match image::ImageFormat::from_mime_type(f.to_string()) {
                     Some(f) => f,
-                    None => return Err(rocket::http::Status::UnprocessableEntity)
+                    None => return Err(super::Error {
+                        code: rocket::http::Status::UnprocessableEntity,
+                        error: fl!(localizer, "unsupported-media-type")
+                    })
                 },
-                None => return Err(rocket::http::Status::BadRequest)
+                None => return Err(super::Error {
+                    code: rocket::http::Status::BadRequest,
+                    error: fl!(localizer, "invalid-request")
+                })
             };
             let mut preview_image_r = image::io::Reader::open(match thumbnail.path() {
                 Some(p) => p,
-                None => return Err(rocket::http::Status::InternalServerError)
-            }).map_err(|_| rocket::http::Status::InternalServerError)?;
+                None => return Err(super::Error {
+                    code: rocket::http::Status::InternalServerError,
+                    error: fl!(localizer, "internal-server-error")
+                })
+            }).map_err(|_| super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })?;
             preview_image_r.set_format(preview_format);
-            let preview_image = preview_image_r.decode().map_err(|_| rocket::http::Status::BadRequest)?;
+            let preview_image = preview_image_r.decode().map_err(|e| {
+                warn!("Failed to decode image: {}", e);
+                super::Error {
+                    code: rocket::http::Status::UnprocessableEntity,
+                    error: fl!(localizer, "failed-to-decode-image")
+                }
+            })?;
 
-            thumbnail.move_copy_to(preview_image_path).await.map_err(|_| rocket::http::Status::InternalServerError)?;
+            thumbnail.move_copy_to(preview_image_path).await.map_err(|_| super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })?;
 
             (thumbnail.content_type().unwrap().to_string(), preview_image.dimensions())
         },
@@ -83,14 +122,23 @@ pub async fn upload_media(
 
             let mut out_image_bytes: Vec<u8> = Vec::new();
             preview_image.write_to(&mut std::io::Cursor::new(&mut out_image_bytes), image::ImageOutputFormat::Jpeg(80))
-                .map_err(|_| rocket::http::Status::InternalServerError)?;
-            std::fs::write(&preview_image_path, &out_image_bytes).map_err(|_| rocket::http::Status::InternalServerError)?;
+                .map_err(|_| super::Error {
+                    code: rocket::http::Status::InternalServerError,
+                    error: fl!(localizer, "internal-server-error")
+                })?;
+            std::fs::write(&preview_image_path, &out_image_bytes).map_err(|_| super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })?;
 
             ("image/jpeg".to_string(), preview_image.dimensions())
         }
     };
 
-    form.file.move_copy_to(image_path).await.map_err(|_| rocket::http::Status::InternalServerError)?;
+    form.file.move_copy_to(image_path).await.map_err(|_| super::Error {
+        code: rocket::http::Status::InternalServerError,
+        error: fl!(localizer, "internal-server-error")
+    })?;
 
     let media = crate::models::Media {
         id: attachment_id,
@@ -111,7 +159,7 @@ pub async fn upload_media(
         description: form.description.clone(),
         owned_by: Some(user.subject),
     };
-    crate::db_run(&db, move |c| -> QueryResult<_> {
+    crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::insert_into(crate::schema::media::dsl::media)
             .values(media).execute(c)
     }).await?;
@@ -133,14 +181,19 @@ pub async fn upload_media(
     }))
 }
 
-pub fn render_media_attachment(media: crate::models::Media, config: &crate::AppConfig) -> Result<super::objs::MediaAttachment, rocket::http::Status> {
+pub fn render_media_attachment(
+    media: crate::models::Media, config: &crate::AppConfig, localizer: &crate::i18n::Localizer
+) -> Result<super::objs::MediaAttachment, super::Error> {
     Ok(super::objs::MediaAttachment {
         id: media.id.to_string(),
         media_type: match media.media_type.as_str() {
             "image" => super::objs::MediaAttachmentType::Image,
             "video" => super::objs::MediaAttachmentType::Video,
             "gifv" => super::objs::MediaAttachmentType::Gifv,
-            _ => return Err(rocket::http::Status::InternalServerError)
+            _ => return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })
         },
         url: media.file.map(|f| format!("https://{}/media/{}", config.uri, f)),
         preview_url: media.preview_file.map(|f| format!("https://{}/media/{}", config.uri, f)),
@@ -162,31 +215,43 @@ pub fn render_media_attachment(media: crate::models::Media, config: &crate::AppC
 #[get("/api/v1/media/<media_id>")]
 pub async fn get_media(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    media_id: String
-) -> Result<rocket::serde::json::Json<super::objs::MediaAttachment>, rocket::http::Status> {
+    media_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::MediaAttachment>, super::Error> {
     if !user.has_scope("write:media") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let media_id = match uuid::Uuid::parse_str(&media_id) {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-media-not-found")
+        })
     };
 
-    let media = match crate::db_run(&db, move |c| -> QueryResult<_> {
+    let media = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::media::dsl::media
             .filter(crate::schema::media::dsl::id.eq(media_id))
             .first::<crate::models::Media>(c).optional()
     }).await? {
         Some(m) => m,
-        None => return Err(rocket::http::Status::NotFound)
+        None => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-media-not-found")
+        })
     };
 
     if media.owned_by != Some(user.subject) {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        })
     }
 
-    Ok(rocket::serde::json::Json(render_media_attachment(media, config)?))
+    Ok(rocket::serde::json::Json(render_media_attachment(media, config, &localizer)?))
 }
 
 #[derive(FromForm)]
@@ -199,28 +264,40 @@ pub struct MediaUpdateForm<'a> {
 #[put("/api/v1/media/<media_id>", data = "<form>")]
 pub async fn update_media(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    media_id: String, mut form: rocket::form::Form<MediaUpdateForm<'_>>,
-) -> Result<rocket::serde::json::Json<super::objs::MediaAttachment>, rocket::http::Status> {
+    media_id: String, mut form: rocket::form::Form<MediaUpdateForm<'_>>, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::MediaAttachment>, super::Error> {
     if !user.has_scope("write:media") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let media_id = match uuid::Uuid::parse_str(&media_id) {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-media-not-found")
+        })
     };
 
-    let mut media = match crate::db_run(&db, move |c| -> QueryResult<_> {
+    let mut media = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::media::dsl::media
             .filter(crate::schema::media::dsl::id.eq(media_id))
             .first::<crate::models::Media>(c).optional()
     }).await? {
         Some(m) => m,
-        None => return Err(rocket::http::Status::NotFound)
+        None => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-media-not-found")
+        })
     };
 
     if media.owned_by != Some(user.subject) {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     if let Some(focus) = &form.focus {
@@ -236,21 +313,42 @@ pub async fn update_media(
         let format = match thumbnail.content_type() {
             Some(f) => match image::ImageFormat::from_mime_type(f.to_string()) {
                 Some(f) => f,
-                None => return Err(rocket::http::Status::UnprocessableEntity)
+                None => return Err(super::Error {
+                    code: rocket::http::Status::UnprocessableEntity,
+                    error: fl!(localizer, "unsupported-media-type")
+                })
             },
-            None => return Err(rocket::http::Status::BadRequest)
+            None => return Err(super::Error {
+                code: rocket::http::Status::BadRequest,
+                error: fl!(localizer, "invalid-request")
+            })
         };
         let mut image_r = image::io::Reader::open(match thumbnail.path() {
             Some(p) => p,
-            None => return Err(rocket::http::Status::InternalServerError)
-        }).map_err(|_| rocket::http::Status::InternalServerError)?;
+            None => return Err(super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })
+        }).map_err(|_| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
         image_r.set_format(format);
-        let image = image_r.decode().map_err(|_| rocket::http::Status::BadRequest)?;
+        let image = image_r.decode().map_err(|e| {
+            warn!("Failed to decode image: {}", e);
+            super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "failed-to-decode-image")
+            }
+        })?;
 
         let preview_image_id = uuid::Uuid::new_v4();
         let preview_image_name = format!("{}.png", preview_image_id.to_string());
         let preview_image_path = format!("./media/{}", preview_image_name);
-        thumbnail.move_copy_to(preview_image_path).await.map_err(|_| rocket::http::Status::InternalServerError)?;
+        thumbnail.move_copy_to(preview_image_path).await.map_err(|_| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
 
         media.preview_content_type = Some(thumbnail.content_type().unwrap().to_string());
         let (width, height) = image.dimensions();
@@ -258,11 +356,11 @@ pub async fn update_media(
         media.preview_height = Some(height as i32);
     }
 
-    let media = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let media = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         diesel::update(crate::schema::media::dsl::media
             .filter(crate::schema::media::dsl::id.eq(media_id)))
             .set(media).get_result::<crate::models::Media>(c)
     }).await?;
 
-    Ok(rocket::serde::json::Json(render_media_attachment(media, config)?))
+    Ok(rocket::serde::json::Json(render_media_attachment(media, config, &localizer)?))
 }

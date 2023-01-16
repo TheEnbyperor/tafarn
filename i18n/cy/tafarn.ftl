@@ -3,6 +3,10 @@ favourite-notification = Hoffodd {$name} eich tŵt
 reblog-notification = Bŵstiodd {$name} eich tŵt
 mention-notification = Sônodd {$name} amdanoch
 
+invalid-client-name = Enw cleient annilys
+invalid-website = Gwefan annilys
+invalid-scope = Cyfyngder annilys
+
 invalid-request = Erfyniad annilys
 client-not-found = Ni chanfuwyd y cleient
 invalid-redirect-uri = URI ailgyfeirio annilys
@@ -45,3 +49,19 @@ scope-write-reports = Danfon adroddiadau camddefnyd
 scope-write-statuses = Danfon tŵtiau
 scope-follow = Gweinyddu eich perthynas â chyfrifon eraill
 scope-push = Mynediad i'ch hysbysiadau gwthio
+
+error-no-permission = Nid oes genych ganiatâd i wneud hyn
+account-not-found = Ni chanfuwyd y cyfrif
+error-status-not-found = Ni chanfuwyd y tŵt
+error-notification-not-found = Ni chanfuwyd y hysbysiad
+unsupported-media-type = Math ffeil ni allwn ei dderbyn
+internal-server-error = Gwall mewnol i'r gweinydd
+failed-to-decode-image = Methwyd â darllen y ddelwedd
+error-media-not-found = Ni chanfuwyd y ffeil
+error-db = Gwall mewnol a'r gronfa ddata
+error-invalid-language = Iaith annilys
+limit-too-large = Gofynwyd am ormod o ddata
+error-invalid-visibility = Gwelededd tŵt annilys
+error-invalid-status = Tŵt annilys
+service-unavailable = Nid yw'r gwasanaeth ar gael ar hyn o bryd
+status-deleted = Mae'r tŵt wedi ei ddileu

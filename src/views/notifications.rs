@@ -4,9 +4,10 @@ use futures::StreamExt;
 use crate::models;
 
 pub async fn render_notification(
-    db: &crate::DbConn, config: &crate::AppConfig, notification: crate::models::Notification
-) -> Result<super::objs::Notification, rocket::http::Status> {
-    let (account, status) = crate::db_run(&db, move |c| -> QueryResult<_> {
+    db: &crate::DbConn, config: &crate::AppConfig, notification: models::Notification,
+    localizer: &crate::i18n::Localizer
+) -> Result<super::objs::Notification, super::Error> {
+    let (account, status) = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let a = crate::schema::accounts::dsl::accounts.find(notification.cause).get_result(c)?;
         let s = notification.status
             .map(|sid| crate::schema::statuses::dsl::statuses.find(sid)
@@ -21,10 +22,10 @@ pub async fn render_notification(
         notification_type: notification.notification_type,
         created_at: Utc.from_utc_datetime(&notification.created_at),
         status: match status {
-            Some(s) => Some(super::statuses::render_status(config, &db, s, Some(&account)).await?),
+            Some(s) => Some(super::statuses::render_status(config, &db, s, localizer, Some(&account)).await?),
             None => None
         },
-        account: super::accounts::render_account(config, &db, account).await?,
+        account: super::accounts::render_account(config, &db, &localizer, account).await?,
         report: None,
     })
 }
@@ -34,27 +35,36 @@ pub async fn notifications(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
     min_id: Option<i32>, max_id: Option<i32>, limit: Option<u64>,
     types: Option<Vec<String>>, exclude_types: Option<Vec<String>>,
-    account_id: Option<String>, host: &rocket::http::uri::Host<'_>,
-) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Notification>>>, rocket::http::Status> {
+    account_id: Option<String>, host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
+) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Notification>>>, super::Error> {
     if !user.has_scope("read:notifications") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     let limit = limit.unwrap_or(15);
     if limit > 500 {
-        return Err(rocket::http::Status::BadRequest);
+        return Err(super::Error {
+            code: rocket::http::Status::BadRequest,
+            error: fl!(localizer, "limit-too-large")
+        });
     }
 
     let account_id = match account_id {
         Some(id) => match uuid::Uuid::parse_str(&id) {
             Ok(id) => Some(id),
-            Err(_) => return Err(rocket::http::Status::BadRequest)
+            Err(_) => return Err(super::Error {
+                code: rocket::http::Status::NotFound,
+                error: fl!(localizer, "account-not-found")
+            })
         },
         None => None
     };
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let notifications: Vec<crate::models::Notification> = crate::db_run(&db, move |c| -> QueryResult<_> {
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let notifications: Vec<crate::models::Notification> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         let mut q = crate::schema::notifications::dsl::notifications.filter(
             crate::schema::notifications::dsl::account.eq(&account.id)
         ).limit(limit as i64).order_by(crate::schema::notifications::created_at.desc()).into_boxed();
@@ -94,7 +104,7 @@ pub async fn notifications(
     Ok(super::LinkedResponse {
         inner: rocket::serde::json::Json(
             futures::stream::iter(notifications.into_iter())
-                .map(|n| render_notification(&db, config, n))
+                .map(|n| render_notification(&db, config, n, &localizer))
                 .buffered(10)
                 .collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>, _>>()?
         ),
@@ -103,24 +113,33 @@ pub async fn notifications(
 }
 
 async fn get_notification_and_check_visibility(
-    notification_id: &str, account: &crate::models::Account, db: &crate::DbConn
-) -> Result<crate::models::Notification, rocket::http::Status> {
+    notification_id: &str, account: &models::Account, db: &crate::DbConn, localizer: &crate::i18n::Localizer
+) -> Result<models::Notification, super::Error> {
     let notification_id = match notification_id.parse::<i32>() {
         Ok(id) => id,
-        Err(_) => return Err(rocket::http::Status::NotFound)
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-notification-not-found")
+        })
     };
 
-    let notification: crate::models::Notification = match crate::db_run(db, move |c| -> QueryResult<_> {
+    let notification: crate::models::Notification = match crate::db_run(db, localizer, move |c| -> QueryResult<_> {
         crate::schema::notifications::dsl::notifications.filter(
             crate::schema::notifications::dsl::iid.eq(notification_id)
         ).get_result(c).optional()
     }).await? {
         Some(a) => a,
-        None => return Err(rocket::http::Status::NotFound)
+        None => return Err(super::Error {
+            code: rocket::http::Status::NotFound,
+            error: fl!(localizer, "error-notification-not-found")
+        })
     };
 
     if notification.account != account.id {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     Ok(notification)
@@ -129,24 +148,30 @@ async fn get_notification_and_check_visibility(
 #[get("/api/v1/notifications/<notification_id>")]
 pub async fn notification(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    notification_id: String
-) -> Result<rocket::serde::json::Json<super::objs::Notification>, rocket::http::Status> {
+    notification_id: String, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::Notification>, super::Error> {
     if !user.has_scope("read:notifications") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let notification = get_notification_and_check_visibility(&notification_id, &account, &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let notification = get_notification_and_check_visibility(&notification_id, &account, &db, &localizer).await?;
 
-    Ok(rocket::serde::json::Json(render_notification(&db, config, notification).await?))
+    Ok(rocket::serde::json::Json(render_notification(&db, config, notification, &localizer).await?))
 }
 
 #[post("/api/v1/notifications/clear")]
 pub async fn clear_notifications(
-    user: super::oauth::TokenClaims
-) -> Result<rocket::serde::json::Json<()>, rocket::http::Status> {
+    user: super::oauth::TokenClaims, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("write:notifications") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
     Ok(rocket::serde::json::Json(()))
@@ -154,14 +179,18 @@ pub async fn clear_notifications(
 
 #[post("/api/v1/notifications/<notification_id>/dimiss")]
 pub async fn dismiss_notification(
-    db: crate::DbConn, user: super::oauth::TokenClaims, notification_id: String
-) -> Result<rocket::serde::json::Json<()>, rocket::http::Status> {
+    db: crate::DbConn, user: super::oauth::TokenClaims, notification_id: String,
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("write:notifications") {
-        return Err(rocket::http::Status::Forbidden);
+        return Err(super::Error {
+            code: rocket::http::Status::Forbidden,
+            error: fl!(localizer, "error-no-permission")
+        });
     }
 
-    let account = super::accounts::get_account(&db, &user).await?;
-    let _notification = get_notification_and_check_visibility(&notification_id, &account, &db).await?;
+    let account = super::accounts::get_account(&db, &localizer, &user).await?;
+    let _notification = get_notification_and_check_visibility(&notification_id, &account, &db, &localizer).await?;
 
     Ok(rocket::serde::json::Json(()))
 }

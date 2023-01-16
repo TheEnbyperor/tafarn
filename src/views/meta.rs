@@ -75,7 +75,7 @@ pub fn well_known_node_info(
 
 #[get("/.well-known/webfinger?<resource>")]
 pub async fn web_finger(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, resource: String
+    db: crate::DbConn, config: &rocket::State<AppConfig>, resource: String, localizer: crate::i18n::Localizer
 ) -> Result<JRD, rocket::http::Status> {
     let (scheme, acct) = match resource.split_once(':') {
         Some((scheme, acct)) => (scheme, acct),
@@ -116,7 +116,7 @@ pub async fn web_finger(
         })
     }
 
-    let account: Option<crate::models::Account> = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let account: Option<crate::models::Account> = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         crate::schema::accounts::dsl::accounts.filter(
             crate::schema::accounts::dsl::username.eq(username)
         ).first(c).optional()

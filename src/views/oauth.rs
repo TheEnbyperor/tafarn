@@ -35,9 +35,9 @@ impl TokenClaims {
         false
     }
 
-    pub async fn get_account(&self, db: &crate::DbConn) -> Result<crate::models::Account, rocket::http::Status> {
+    pub async fn get_account(&self, db: &crate::DbConn, localizer: &crate::i18n::Localizer) -> Result<crate::models::Account, super::Error> {
         let sub = self.subject.clone();
-        crate::db_run(db, move |c| -> diesel::result::QueryResult<_> {
+        crate::db_run(db, localizer, move |c| -> QueryResult<_> {
             crate::schema::accounts::dsl::accounts.filter(
                 crate::schema::accounts::dsl::owned_by.eq(sub)
             ).get_result::<crate::models::Account>(c)
@@ -105,6 +105,11 @@ impl<'r> rocket::request::FromRequest<'r> for TokenClaims {
             rocket::request::Outcome::Forward(()) => return rocket::request::Outcome::Forward(()),
             rocket::request::Outcome::Failure(e) => return rocket::request::Outcome::Failure(e)
         };
+        let localizer = match request.guard::<crate::i18n::Localizer>().await {
+            rocket::request::Outcome::Success(a) => a,
+            rocket::request::Outcome::Forward(()) => return rocket::request::Outcome::Forward(()),
+            rocket::request::Outcome::Failure(e) => return rocket::request::Outcome::Failure((e.0, ()))
+        };
 
         let authorization_txt = match request.headers().get_one("Authorization") {
             Some(t) => t,
@@ -124,7 +129,7 @@ impl<'r> rocket::request::FromRequest<'r> for TokenClaims {
             Err(_) => return rocket::request::Outcome::Failure((rocket::http::Status::Unauthorized, ())),
         };
 
-        let token_obj: crate::models::OAuthToken = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+        let token_obj: crate::models::OAuthToken = match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
             crate::schema::oauth_token::dsl::oauth_token.find(claims.json_web_token_id).first(c).optional()
         }).await {
             Ok(Some(c)) => c,
@@ -272,38 +277,52 @@ pub struct AppsCreate {
 #[post("/api/v1/apps", data = "<form>", rank = 1)]
 pub async fn api_apps_form(
     db: crate::DbConn, config: &rocket::State<AppConfig>, form: rocket::form::Form<AppsCreate>,
-) -> Result<rocket::serde::json::Json<super::objs::App>, rocket::http::Status> {
-    _api_apps(db, config, form.into_inner()).await
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::App>, super::Error> {
+    _api_apps(db, config, form.into_inner(), localizer).await
 }
 
 #[post("/api/v1/apps", data = "<form>", rank = 2)]
 pub async fn api_apps_json(
     db: crate::DbConn, config: &rocket::State<AppConfig>, form: rocket::serde::json::Json<AppsCreate>,
-) -> Result<rocket::serde::json::Json<super::objs::App>, rocket::http::Status> {
-    _api_apps(db, config, form.into_inner()).await
+    localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::App>, super::Error> {
+    _api_apps(db, config, form.into_inner(), localizer).await
 }
 
 pub async fn _api_apps(
-    db: crate::DbConn, config: &rocket::State<AppConfig>, form: AppsCreate,
-) -> Result<rocket::serde::json::Json<super::objs::App>, rocket::http::Status> {
+    db: crate::DbConn, config: &rocket::State<AppConfig>, form: AppsCreate, localizer: crate::i18n::Localizer
+) -> Result<rocket::serde::json::Json<super::objs::App>, super::Error> {
     if form.client_name.trim().is_empty() {
-        return Err(rocket::http::Status::UnprocessableEntity);
+        return Err(super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "invalid-client-name")
+        });
     }
 
     let redirect_uri = match rocket::http::uri::Absolute::parse(&form.redirect_uris) {
         Ok(uri) => uri.into_normalized().to_string(),
-        Err(_) => return Err(rocket::http::Status::UnprocessableEntity),
+        Err(_) => return Err(super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "invalid-redirect-uri")
+        }),
     };
 
     let website = form.website.map(|w| match rocket::http::uri::Absolute::parse(&w) {
         Ok(uri) => {
             if uri.scheme() != "http" && uri.scheme() != "https" {
-                return Err(rocket::http::Status::UnprocessableEntity);
+                return Err(super::Error {
+                    code: rocket::http::Status::UnprocessableEntity,
+                    error: fl!(localizer, "invalid-website")
+                });
             }
 
             Ok(uri.into_normalized().to_string())
         }
-        Err(_) => Err(rocket::http::Status::UnprocessableEntity),
+        Err(_) => Err(super::Error {
+            code: rocket::http::Status::UnprocessableEntity,
+            error: fl!(localizer, "invalid-website")
+        }),
     }).transpose()?;
 
     let scopes = match form.scopes {
@@ -318,7 +337,10 @@ pub async fn _api_apps(
 
     for scope in &scopes {
         if !API_SCOPES.contains_key(scope) {
-            return Err(rocket::http::Status::UnprocessableEntity);
+            return Err(super::Error {
+                code: rocket::http::Status::UnprocessableEntity,
+                error: fl!(localizer, "invalid-scope")
+            });
         }
     }
 
@@ -336,7 +358,7 @@ pub async fn _api_apps(
         ),
     };
 
-    let new_app = crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let new_app = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         c.transaction(|| {
             diesel::insert_into(crate::schema::apps::dsl::apps)
                 .values(&new_app)
@@ -391,7 +413,7 @@ pub async fn oauth_authorize(
     oidc_app: &rocket::State<super::oidc::OIDCApplication>, oidc_user: Option<super::oidc::OIDCUser>,
     origin: &rocket::http::uri::Origin<'_>, csrf_token: crate::csrf::CSRFToken,
     cookies: &rocket::http::CookieJar<'_>, localizer: crate::i18n::Localizer
-) -> Result<OAuthAuthorizeResponse, rocket::http::Status> {
+) -> Result<OAuthAuthorizeResponse, super::Error> {
     let client_id = match uuid::Uuid::parse_str(client_id) {
         Ok(id) => id,
         Err(_) => return Ok(OAuthAuthorizeResponse::Template(Template::render("oauth-error", context! {
@@ -400,7 +422,7 @@ pub async fn oauth_authorize(
         })))
     };
 
-    let (app, app_scopes) = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let (app, app_scopes) = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
         Ok((
             crate::schema::apps::dsl::apps.find(client_id).first::<crate::models::Apps>(c).optional()?,
             crate::schema::app_scopes::dsl::app_scopes.filter(
@@ -483,7 +505,7 @@ pub async fn oauth_authorize(
         let user_id = oidc_user.claims.subject().to_string();
 
         let c_user_id = user_id.clone();
-        let consent = crate::db_run(&db, move |c| -> QueryResult<_> {
+        let consent = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::oauth_consents::dsl::oauth_consents.filter(
                 crate::schema::oauth_consents::dsl::app_id.eq(app.id)
             ).filter(
@@ -493,7 +515,7 @@ pub async fn oauth_authorize(
 
         let should_consent = match consent {
             Some(consent) => {
-                let consent_scopes = crate::db_run(&db, move |c| -> QueryResult<_> {
+                let consent_scopes = crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                     crate::schema::oauth_consent_scopes::dsl::oauth_consent_scopes.filter(
                         crate::schema::oauth_consent_scopes::dsl::consent_id.eq(consent.id)
                     ).load::<crate::models::AppScopes>(c)
@@ -528,7 +550,7 @@ pub async fn oauth_authorize(
                 lang: localizer
             })))
         } else {
-            return Ok(match crate::db_run(&db, move |c| -> QueryResult<_> {
+            return Ok(match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                 c.transaction(|| {
                     let id = uuid::Uuid::new_v4();
                     diesel::insert_into(crate::schema::oauth_codes::dsl::oauth_codes)
@@ -614,7 +636,7 @@ pub async fn oauth_consent(
             OAuthConsentResponse::Redirect(rocket::response::Redirect::to(state_obj.redirect_uri.to_string()))
         }
         "yes" => {
-            match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+            match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
                 c.transaction(|| {
                     let id = uuid::Uuid::new_v4();
                     diesel::insert_into(crate::schema::oauth_consents::dsl::oauth_consents)
@@ -660,7 +682,7 @@ pub struct ClientAuth {
 
 impl ClientAuth {
     async fn from_request(
-        db: &crate::DbConn, basic_auth: Option<rocket_basicauth::BasicAuth>, client_id: Option<&str>, client_secret: Option<&str>
+        db: &crate::DbConn, localizer: &crate::i18n::Localizer, basic_auth: Option<rocket_basicauth::BasicAuth>, client_id: Option<&str>, client_secret: Option<&str>
     ) -> Result<ClientAuth, (rocket::http::Status, rocket::serde::json::Json<OAuthError>)> {
         let (client_id, client_secret) = match basic_auth {
             Some(b) => (b.username, b.password),
@@ -683,7 +705,7 @@ impl ClientAuth {
             })))
         };
 
-        let client_obj: crate::models::Apps = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+        let client_obj: crate::models::Apps = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
             crate::schema::apps::dsl::apps.find(client_id).first(c)
         }).await {
             Ok(c) => c,
@@ -739,22 +761,22 @@ pub struct OAuthError {
 #[post("/oauth/token", data = "<form>", rank = 1)]
 pub async fn oauth_token_form(
     config: &rocket::State<AppConfig>, db: crate::DbConn, form: rocket::form::Form<OAuthTokenForm>,
-    basic_auth: Option<rocket_basicauth::BasicAuth>
+    basic_auth: Option<rocket_basicauth::BasicAuth>, localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<OAuthToken>, (rocket::http::Status, rocket::serde::json::Json<OAuthError>)> {
-    _oauth_token(config, db, form.into_inner(), basic_auth).await
+    _oauth_token(config, db, form.into_inner(), basic_auth, localizer).await
 }
 
 #[post("/oauth/token", data = "<form>", rank = 2)]
 pub async fn oauth_token_json(
     config: &rocket::State<AppConfig>, db: crate::DbConn, form: rocket::serde::json::Json<OAuthTokenForm>,
-    basic_auth: Option<rocket_basicauth::BasicAuth>
+    basic_auth: Option<rocket_basicauth::BasicAuth>, localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<OAuthToken>, (rocket::http::Status, rocket::serde::json::Json<OAuthError>)> {
-    _oauth_token(config, db, form.into_inner(), basic_auth).await
+    _oauth_token(config, db, form.into_inner(), basic_auth, localizer).await
 }
 
 pub async fn _oauth_token(
     config: &rocket::State<AppConfig>, db: crate::DbConn, form: OAuthTokenForm,
-    basic_auth: Option<rocket_basicauth::BasicAuth>
+    basic_auth: Option<rocket_basicauth::BasicAuth>, localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<OAuthToken>, (rocket::http::Status, rocket::serde::json::Json<OAuthError>)> {
     match form.grant_type.as_str() {
         "authorization_code" => {
@@ -776,7 +798,7 @@ pub async fn _oauth_token(
             };
 
             let client_obj = ClientAuth::from_request(
-                &db, basic_auth, form.client_id.as_deref(), form.client_secret.as_deref()
+                &db, &localizer, basic_auth, form.client_id.as_deref(), form.client_secret.as_deref()
             ).await?.client;
 
             let code_id = match uuid::Uuid::parse_str(&code) {
@@ -788,7 +810,7 @@ pub async fn _oauth_token(
                 })))
             };
 
-            let code_obj: crate::models::OAuthCodes = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+            let code_obj: crate::models::OAuthCodes = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                 crate::schema::oauth_codes::dsl::oauth_codes.find(code_id).first(c)
             }).await {
                 Ok(c) => c,
@@ -799,7 +821,7 @@ pub async fn _oauth_token(
                 })))
             };
 
-            let scopes: Vec<String> = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+            let scopes: Vec<String> = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                 crate::schema::oauth_code_scopes::dsl::oauth_code_scopes
                     .filter(crate::schema::oauth_code_scopes::dsl::code_id.eq(code_id))
                     .select(crate::schema::oauth_code_scopes::dsl::scope)
@@ -813,7 +835,7 @@ pub async fn _oauth_token(
                 })))
             };
 
-            match crate::db_run(&db, move |c| -> QueryResult<()> {
+            match crate::db_run(&db, &localizer, move |c| -> QueryResult<()> {
                 diesel::delete(crate::schema::oauth_code_scopes::dsl::oauth_code_scopes.filter(
                 crate::schema::oauth_code_scopes::dsl::code_id.eq(code_id)
                 )).execute(c)?;
@@ -827,7 +849,7 @@ pub async fn _oauth_token(
                 })))
             };
 
-            match crate::db_run(&db, move |c| -> QueryResult<()> {
+            match crate::db_run(&db, &localizer, move |c| -> QueryResult<()> {
                 diesel::delete(crate::schema::oauth_codes::dsl::oauth_codes.find(code_id))
                     .execute(c)?;
                 Ok(())
@@ -865,7 +887,7 @@ pub async fn _oauth_token(
             }
 
             let c_scopes = scopes.clone();
-            let new_token: crate::models::OAuthToken = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+            let new_token: crate::models::OAuthToken = match crate::db_run(&db, &localizer, move |c| -> QueryResult<_> {
                 let new_token = crate::models::OAuthToken {
                     id: uuid::Uuid::new_v4(),
                     client_id: client_obj.id,
@@ -874,7 +896,7 @@ pub async fn _oauth_token(
                     revoked: false,
                 };
 
-                c.transaction(|| -> diesel::result::QueryResult<_> {
+                c.transaction(|| -> QueryResult<_> {
                     diesel::insert_into(crate::schema::oauth_token::dsl::oauth_token)
                         .values(&new_token)
                         .execute(c)?;
@@ -937,9 +959,9 @@ pub struct OAuthRevokeForm<'r> {
 #[post("/oauth/revoke", data = "<form>")]
 pub async fn oauth_revoke(
     config: &rocket::State<AppConfig>, db: crate::DbConn, form: rocket::form::Form<OAuthRevokeForm<'_>>,
-    basic_auth: Option<rocket_basicauth::BasicAuth>
+    basic_auth: Option<rocket_basicauth::BasicAuth>, localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<()>, (rocket::http::Status, rocket::serde::json::Json<OAuthError>)> {
-    let client_obj = ClientAuth::from_request(&db, basic_auth, form.client_id, form.client_secret).await?.client;
+    let client_obj = ClientAuth::from_request(&db, &localizer, basic_auth, form.client_id, form.client_secret).await?.client;
 
     let claims = match TokenClaims::verify(form.token, &config) {
         Ok(c) => c,
@@ -950,7 +972,7 @@ pub async fn oauth_revoke(
         }))),
     };
 
-    let token_obj: crate::models::OAuthToken = match crate::db_run(&db, move |c| -> diesel::result::QueryResult<_> {
+    let token_obj: crate::models::OAuthToken = match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
         crate::schema::oauth_token::dsl::oauth_token.find(&claims.json_web_token_id).first(c)
     }).await {
         Ok(c) => c,
@@ -969,16 +991,16 @@ pub async fn oauth_revoke(
         })))
     }
 
-    match crate::db_run(&db, move |c| -> diesel::result::QueryResult<()> {
+    match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<()> {
         diesel::update(crate::schema::oauth_token::dsl::oauth_token.find(&claims.json_web_token_id))
             .set(crate::schema::oauth_token::dsl::revoked.eq(true))
             .execute(c)?;
         Ok(())
     }).await {
         Ok(_) => {}
-        Err(_) => return Err((rocket::http::Status::InternalServerError, rocket::serde::json::Json(OAuthError {
+        Err(e) => return Err((rocket::http::Status::InternalServerError, rocket::serde::json::Json(OAuthError {
             error: "server_error".to_string(),
-            error_description: None,
+            error_description: Some(e.error),
             error_uri: None,
         })))
     };
