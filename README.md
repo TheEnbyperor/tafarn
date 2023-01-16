@@ -35,6 +35,14 @@ The OIDC provider must support the `/.well-known/openid-configuration` configura
 On first login the display name will be set to the `name` claim, and the username to either the `preferred_username` 
 or `given_name` claim, if `preferred_username` is not available.
 
+## Localization
+
+Tafarn uses the Fluent localization system. To add a new language copy the `en-GB` folder in `i18n` as a starting point.
+
+Currently supported languages are:
+- English (en-GB)
+- Welsh (cy)
+
 ## ActivityPub implementation status
 
 ### Events the server can receive
