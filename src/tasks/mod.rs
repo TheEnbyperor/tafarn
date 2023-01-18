@@ -22,6 +22,7 @@ pub struct Config {
     pub vapid_key: Vec<u8>,
     pub web_push_client: std::sync::Arc<web_push_old::WebPushClient>,
     pub as_key: std::sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+    pub media_path: std::sync::Arc<std::path::PathBuf>,
 }
 
 #[inline]

@@ -383,9 +383,7 @@ pub async fn update_credentials(
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
             })?;
-        let image_id = uuid::Uuid::new_v4();
-        let image_name = format!("{}.png", image_id.to_string());
-        let image_path = format!("./media/{}", image_name);
+        let (image_name, image_path) = crate::gen_media_path(&config.media_path, format.extensions_str()[0]);
         std::fs::write(&image_path, &out_image_bytes).map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")
@@ -437,9 +435,7 @@ pub async fn update_credentials(
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
             })?;
-        let image_id = uuid::Uuid::new_v4();
-        let image_name = format!("{}.png", image_id.to_string());
-        let image_path = format!("./media/{}", image_name);
+        let (image_name, image_path) = crate::gen_media_path(&config.media_path, format.extensions_str()[0]);
         std::fs::write(&image_path, &out_image_bytes).map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")

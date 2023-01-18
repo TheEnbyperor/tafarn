@@ -8,6 +8,8 @@ use futures::stream::StreamExt;
 use super::{resolve_url, resolve_object, fetch_object};
 
 async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams::ImageOrLink>) -> Option<(String, String, String)> {
+    let config = super::config();
+
     let avatar = resolve_object(img.clone()).await?;
     if let activity_streams::ImageOrLink::Image(image) = avatar {
         let url = image.url?;
@@ -33,9 +35,7 @@ async fn fetch_image(img: &activity_streams::ReferenceOrObject<activity_streams:
             Ok(r) => match r.error_for_status() {
                 Ok(r) => match r.bytes().await {
                     Ok(b) => {
-                        let image_id = uuid::Uuid::new_v4();
-                        let image_name = format!("{}.{}", image_id.to_string(), format.extensions_str()[0]);
-                        let image_path = format!("./media/{}", image_name);
+                        let (image_name, image_path) = crate::gen_media_path(&config.media_path, format.extensions_str()[0]);
                         match std::fs::write(&image_path, &b) {
                             Ok(_) => {
                                 Some((image_name, url.to_string(), content_type))

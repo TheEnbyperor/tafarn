@@ -40,6 +40,7 @@ async fn main() -> Result<(), rocket::Error> {
         vapid_key: app.vapid_key,
         web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new()),
         as_key: std::sync::Arc::new(app.as_key),
+        media_path: std::sync::Arc::new(app.media_path)
     });
 
     let _ = app.rocket

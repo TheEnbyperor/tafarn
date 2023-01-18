@@ -162,6 +162,7 @@ fn image_format_to_content_type(format: image::ImageFormat) -> &'static str {
 struct Attachment {
     remote_url: String,
     file_name: String,
+    file_path: std::path::PathBuf,
     format: AttachmentFormat,
 }
 
@@ -179,6 +180,8 @@ impl AttachmentFormat {
 }
 
 async fn _download_object(obj: &activity_streams::ObjectOrLink) -> Option<Attachment> {
+    let config = super::config();
+
     match obj {
         activity_streams::ObjectOrLink::Object(activity_streams::Object::Document(doc)) |
         activity_streams::ObjectOrLink::Object(activity_streams::Object::Image(doc)) => {
@@ -205,14 +208,13 @@ async fn _download_object(obj: &activity_streams::ObjectOrLink) -> Option<Attach
                 Ok(r) => match r.error_for_status() {
                     Ok(r) => match r.bytes().await {
                         Ok(b) => {
-                            let doc_id = uuid::Uuid::new_v4();
-                            let doc_name = format!("{}.{}", doc_id.to_string(), format.extensions_str()[0]);
-                            let doc_path = format!("./media/{}", &doc_name);
+                            let (doc_name, doc_path) = crate::gen_media_path(&config.media_path, format.extensions_str()[0]);
                             match std::fs::write(&doc_path, &b) {
                                 Ok(_) => {
                                     Some(Attachment {
                                         remote_url: url.to_string(),
                                         file_name: doc_name,
+                                        file_path: doc_path,
                                         format: AttachmentFormat::Image(format),
                                     })
                                 }
@@ -257,13 +259,10 @@ async fn fetch_attachment(attachment: activity_streams::ReferenceOrObject<activi
         } else {
             match f.format {
                 AttachmentFormat::Image(format) => {
-                    let doc_path = format!("./media/{}", &f.file_name);
-                    let mut image_r = image::io::Reader::open(doc_path).ok()?;
+                    let mut image_r = image::io::Reader::open(&f.file_path).ok()?;
                     image_r.set_format(format);
                     if let Some(image) = image_r.decode().ok() {
-                        let doc_id = uuid::Uuid::new_v4();
-                        let doc_name = format!("{}.{}", doc_id.to_string(), format.extensions_str()[0]);
-                        let doc_path = format!("./media/{}", &doc_name);
+                        let (doc_name, doc_path) = crate::gen_media_path(&config.media_path, format.extensions_str()[0]);
                         let preview_image = image.thumbnail(crate::PREVIEW_DIMENSION, crate::PREVIEW_DIMENSION);
                         let mut out_image_bytes: Vec<u8> = Vec::new();
                         preview_image.write_to(&mut std::io::Cursor::new(&mut out_image_bytes), image::ImageOutputFormat::Jpeg(80)).ok()?;

@@ -1,5 +1,4 @@
 use std::ops::Deref;
-use diesel::RunQueryDsl;
 
 pub struct Languages(pub Vec<i18n_embed::unic_langid::LanguageIdentifier>);
 pub struct Localizer {

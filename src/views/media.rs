@@ -48,12 +48,8 @@ pub async fn upload_media(
     };
 
     let attachment_id = uuid::Uuid::new_v4();
-    let image_id = uuid::Uuid::new_v4();
-    let preview_image_id = uuid::Uuid::new_v4();
-    let image_name = format!("{}.png", image_id.to_string());
-    let preview_image_name = format!("{}.png", preview_image_id.to_string());
-    let image_path = format!("./media/{}", image_name);
-    let preview_image_path = format!("./media/{}", preview_image_name);
+    let (image_name, image_path) = crate::gen_media_path(&config.media_path, "png");
+    let (preview_image_name, preview_image_path) = crate::gen_media_path(&config.media_path, "png");
 
     let mut image_r = image::io::Reader::open(match form.file.path() {
         Some(p) => p,
@@ -342,9 +338,7 @@ pub async fn update_media(
             }
         })?;
 
-        let preview_image_id = uuid::Uuid::new_v4();
-        let preview_image_name = format!("{}.png", preview_image_id.to_string());
-        let preview_image_path = format!("./media/{}", preview_image_name);
+        let (preview_image_name, preview_image_path) = crate::gen_media_path(&config.media_path, "png");
         thumbnail.move_copy_to(preview_image_path).await.map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")

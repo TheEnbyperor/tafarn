@@ -13,6 +13,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate i18n_embed_fl;
 
+use std::path::PathBuf;
 use rocket_sync_db_pools::database;
 use rocket_sync_db_pools::Poolable;
 use celery::prelude::*;
@@ -184,6 +185,7 @@ pub struct Config {
     uri: String,
     vapid_key: std::path::PathBuf,
     as_key: std::path::PathBuf,
+    media_path: std::path::PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -203,6 +205,7 @@ pub struct AppConfig {
     pub uri: String,
     pub web_push_signature: web_push::PartialVapidSignatureBuilder,
     pub as_key: openssl::pkey::PKey<openssl::pkey::Private>,
+    pub media_path: PathBuf,
 }
 
 pub struct App {
@@ -211,6 +214,14 @@ pub struct App {
     pub uri: String,
     pub vapid_key: Vec<u8>,
     pub as_key: openssl::pkey::PKey<openssl::pkey::Private>,
+    pub media_path: PathBuf,
+}
+
+pub fn gen_media_path(root: &std::path::Path, ext: &str) -> (String, PathBuf) {
+    let media_id = uuid::Uuid::new_v4();
+    let media_name = format!("{}.{}", media_id.to_string(), ext);
+    let media_path = root.join(&media_name);
+    (media_name, media_path)
 }
 
 pub async fn setup() -> App {
@@ -295,9 +306,11 @@ pub async fn setup() -> App {
             jwt_secret: jwt_simple::algorithms::HS512Key::from_bytes(config.jwt_secret.as_bytes()),
             web_push_signature,
             as_key: as_key.clone(),
+            media_path: config.media_path.clone(),
         }).manage(oidc_app),
         celery_app,
         vapid_key: vapid_key_bytes,
         as_key,
+        media_path: config.media_path,
     }
 }
