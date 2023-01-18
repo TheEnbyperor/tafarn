@@ -48,7 +48,7 @@ scope-write-notifications = Gweinyddu eich hysbysiadau
 scope-write-reports = Danfon adroddiadau camddefnyd
 scope-write-statuses = Danfon tŵtiau
 scope-follow = Gweinyddu eich perthynas â chyfrifon eraill
-scope-push = Mynediad i'ch hysbysiadau gwthio
+scope-push = Mynediad i'ch hysbysiadau gwthiadwy
 
 error-no-permission = Nid oes genych ganiatâd i wneud hyn
 account-not-found = Ni chanfuwyd y cyfrif
