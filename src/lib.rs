@@ -193,6 +193,8 @@ pub struct OIDCConfig {
     issuer_url: String,
     client_id: String,
     client_secret: String,
+    #[serde(default)]
+    required_role: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -292,6 +294,7 @@ pub async fn setup() -> App {
         &config.oidc.issuer_url,
         &config.oidc.client_id,
         &config.oidc.client_secret,
+        config.oidc.required_role.as_deref(),
     ).await.expect("Unable to setup OIDC app");
 
     info!("Applying database migrations");

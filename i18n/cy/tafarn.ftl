@@ -6,6 +6,7 @@ mention-notification = Sônodd {$name} amdanoch
 invalid-client-name = Enw cleient annilys
 invalid-website = Gwefan annilys
 invalid-scope = Cyfyngder annilys
+login-unauthorized = Nid oes genych yr hawl i fewngofnodi i'r gweinydd yma
 
 invalid-request = Erfyniad annilys
 client-not-found = Ni chanfuwyd y cleient

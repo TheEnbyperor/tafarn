@@ -5,6 +5,7 @@ use rocket::Request;
 use rocket::response::Redirect;
 use chrono::prelude::*;
 use diesel::prelude::*;
+use rocket_dyn_templates::{context, Template};
 
 type OIDCIdTokenFields = openidconnect::IdTokenFields<
     AdditionalClaims, openidconnect::EmptyExtraTokenFields, openidconnect::core::CoreGenderClaim,
@@ -188,6 +189,7 @@ impl openidconnect::AdditionalClaims for AdditionalClaims {}
 pub struct OIDCApplication {
     client: OIDCClient,
     client_id: String,
+    required_role: Option<String>
 }
 
 impl OIDCApplication {
@@ -195,6 +197,7 @@ impl OIDCApplication {
         issuer: &str,
         client_id: &str,
         client_secret: &str,
+        required_role: Option<&str>,
     ) -> Result<Self, String> {
         let provider_metadata = openidconnect::core::CoreProviderMetadata::discover_async(
             openidconnect::IssuerUrl::new(issuer.to_string())
@@ -211,6 +214,7 @@ impl OIDCApplication {
         Ok(Self {
             client,
             client_id: client_id.to_string(),
+            required_role: required_role.map(|r| r.to_string())
         })
     }
 
@@ -276,24 +280,42 @@ impl<'r> rocket::response::Responder<'r, 'static> for OIDCAuthorizeRedirect {
     }
 }
 
+#[derive(Responder)]
+pub enum OIDCRedirectResponse {
+    #[response(status = 400)]
+    BadRequest(Template),
+    #[response(status = 500)]
+    InternalServerError(Template),
+    Redirect(Redirect),
+}
+
 #[get("/oidc/redirect?<code>&<state>")]
 pub async fn oidc_redirect(
     cookies: &CookieJar<'_>, oidc_app: &rocket::State<OIDCApplication>,
     code: String, state: &str, db: crate::DbConn, lang: crate::i18n::Languages,
     localizer: crate::i18n::Localizer
-) -> Result<Redirect, rocket::http::Status> {
+) -> OIDCRedirectResponse {
     let state_txt = match cookies.get_private("oidc_auth_state") {
         Some(t) => t,
-        None => return Err(rocket::http::Status::BadRequest)
+        None => return OIDCRedirectResponse::BadRequest(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-state"),
+            lang: localizer
+        }))
     };
     let state_obj: OIDCAuthorizeState = match serde_json::from_str(state_txt.value()) {
         Ok(s) => s,
-        Err(_) => return Err(rocket::http::Status::InternalServerError)
+        Err(_) => return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+            message: fl!(localizer, "internal-server-error"),
+            lang: localizer
+        }))
     };
     cookies.remove_private(state_txt);
 
     if state != state_obj.csrf_token.secret() {
-        return Err(rocket::http::Status::BadRequest);
+        return OIDCRedirectResponse::BadRequest(Template::render("oauth-error", context! {
+            message: fl!(localizer, "invalid-state"),
+            lang: localizer
+        }))
     }
 
     let code = openidconnect::AuthorizationCode::new(code);
@@ -304,26 +326,47 @@ pub async fn oidc_redirect(
         Ok(r) => r,
         Err(err) => {
             warn!("Unable to exchange auth code: {}", err);
-            return Err(rocket::http::Status::InternalServerError);
+            return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+                message: fl!(localizer, "internal-server-error"),
+                lang: localizer
+            }));
         }
     };
 
     if auth_res.token_type() != &openidconnect::core::CoreTokenType::Bearer {
-        return Err(rocket::http::Status::BadRequest);
+        return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+            message: fl!(localizer, "internal-server-error"),
+            lang: localizer
+        }))
     }
 
     let id_token = match auth_res.id_token() {
         Some(i) => i.clone(),
-        None => return Err(rocket::http::Status::InternalServerError)
+        None => return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+            message: fl!(localizer, "internal-server-error"),
+            lang: localizer
+        }))
     };
 
     let id_claims = match id_token.into_claims(&oidc_app.client.id_token_verifier(), &state_obj.nonce) {
         Ok(c) => c,
         Err(err) => {
             warn!("Unable to verify claims: {}", err);
-            return Err(rocket::http::Status::BadRequest);
+            return OIDCRedirectResponse::BadRequest(Template::render("oauth-error", context! {
+                message: fl!(localizer, "invalid-state"),
+                lang: localizer
+            }))
         }
     };
+
+    if let Some(required_role) = &oidc_app.required_role {
+        if !id_claims.additional_claims().has_role(&oidc_app.client_id, required_role) {
+            return OIDCRedirectResponse::BadRequest(Template::render("oauth-error", context! {
+                message: fl!(localizer, "login-unauthorized"),
+                lang: localizer
+            }))
+        }
+    }
 
     let session_id = uuid::Uuid::new_v4();
     let session = crate::models::Session {
@@ -332,7 +375,10 @@ pub async fn oidc_redirect(
         expires_at: match auth_res.expires_in() {
             Some(d) => Some((Utc::now() + match Duration::from_std(d) {
                 Ok(d) => d,
-                Err(_) => return Err(rocket::http::Status::InternalServerError)
+                Err(_) => return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+                    message: fl!(localizer, "internal-server-error"),
+                    lang: localizer
+                }))
             }).naive_utc()),
             None => None
         },
@@ -340,11 +386,19 @@ pub async fn oidc_redirect(
         claims: serde_json::to_string(&id_claims).unwrap(),
     };
 
-    crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
+    match crate::db_run(&db, &localizer, move |c| -> diesel::result::QueryResult<_> {
         diesel::insert_into(crate::schema::session::dsl::session)
             .values(&session)
             .execute(c)
-    }).await?;
+    }).await {
+        Ok(_) => {},
+        Err(_) => {
+            return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+                    message: fl!(localizer, "internal-server-error"),
+                    lang: localizer
+                }))
+        }
+    }
 
     cookies.add_private(
         rocket::http::Cookie::build("oidc_login", session_id.to_string())
@@ -355,7 +409,15 @@ pub async fn oidc_redirect(
             .finish()
     );
 
-    super::accounts::init_account(db, &id_claims, &lang, &localizer).await?;
+    match super::accounts::init_account(db, &id_claims, &lang, &localizer).await {
+        Ok(_) => {},
+        Err(_) => {
+            return OIDCRedirectResponse::InternalServerError(Template::render("oauth-error", context! {
+                message: fl!(localizer, "internal-server-error"),
+                lang: localizer
+            }))
+        }
+    }
 
-    Ok(Redirect::temporary(state_obj.return_uri))
+    OIDCRedirectResponse::Redirect(Redirect::temporary(state_obj.return_uri))
 }

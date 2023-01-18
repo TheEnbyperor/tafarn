@@ -6,6 +6,7 @@ mention-notification = {$name} mentioned you
 invalid-client-name = Invalid client name
 invalid-website = Invalid website
 invalid-scope = Invalid scope
+login-unauthorized = You don't have permission to login to this server
 
 invalid-request = Invalid request
 client-not-found = Client not found
