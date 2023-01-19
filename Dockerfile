@@ -4,9 +4,8 @@ WORKDIR /usr/src/
 
 RUN USER=root cargo new tafarn
 WORKDIR /usr/src/tafarn
-COPY Cargo.toml Cargo.lock ./
-RUN cargo build --release
 
+COPY Cargo.toml Cargo.lock .
 COPY src ./src
 COPY migrations ./migrations
 COPY i18n ./i18n
