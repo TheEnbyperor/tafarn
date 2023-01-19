@@ -200,7 +200,7 @@ impl ObjectID for Object {
             Object::Mention(o) => o.href.as_deref(),
             Object::Profile(o) => o.common.id.as_deref(),
             Object::Tombstone(o) => o.common.id.as_deref(),
-            Object::PropertyValue(o) => None,
+            Object::PropertyValue(_) => None,
         }
     }
 }
@@ -980,7 +980,7 @@ async fn get_account(db: &crate::DbConn, localizer: &crate::i18n::Localizer, id:
 
 #[get("/as/users/<id>")]
 pub async fn user(
-    db: crate::DbConn, localizer: crate::i18n::Localizer, config: &rocket::State<AppConfig>, id: &str,
+    db: crate::DbConn, localizer: crate::i18n::Localizer, id: &str,
 ) -> Result<Object, rocket::http::Status> {
     let account = get_account(&db, &localizer, id).await?;
 

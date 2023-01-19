@@ -1,7 +1,6 @@
 use crate::models;
 use crate::views::activity_streams;
 use celery::prelude::*;
-use diesel::prelude::*;
 use itertools::Itertools;
 
 

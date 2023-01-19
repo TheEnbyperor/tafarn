@@ -72,7 +72,7 @@ impl<'r> rocket::request::FromRequest<'r> for OIDCUser {
             crate::schema::session::dsl::session.find(session_id).first::<crate::models::Session>(c)
         }).await {
             Ok(s) => s,
-            Err(err) => {
+            Err(_) => {
                 error!("Unable to retrieve session from database");
                 return rocket::request::Outcome::Forward(())
             }
@@ -132,7 +132,7 @@ impl<'r> rocket::request::FromRequest<'r> for OIDCUser {
                                 .execute(c)
                         }).await  {
                             Ok(_) => {},
-                            Err(err) => {
+                            Err(_) => {
                                 error!("Unable to update session in database:");
                                 return rocket::request::Outcome::Failure((rocket::http::Status::InternalServerError, ()));
                             }
@@ -203,7 +203,12 @@ impl OIDCApplication {
             openidconnect::IssuerUrl::new(issuer.to_string())
                 .map_err(|err| format!("Invalid issuer URI: {}", err))?,
             openidconnect::reqwest::async_http_client,
-        ).await.map_err(|err| format!("Failed to discover OIDC server: {}", err))?;
+        ).await.map_err(|err| {
+            match err {
+                openidconnect::DiscoveryError::Request(err) => format!("Unable to retrieve provider metadata: {}", err),
+                err => format!("Unable to retrieve provider metadata: {}", err),
+            }
+        })?;
 
         let client = OIDCClient::from_provider_metadata(
             provider_metadata,

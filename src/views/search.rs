@@ -1,5 +1,4 @@
 use diesel::prelude::*;
-use chrono::prelude::*;
 
 #[get("/api/v2/search?<q>&<limit>&<offset>&<resolve>&<following>&<type>")]
 pub async fn search(

@@ -2,7 +2,7 @@ use crate::AppConfig;
 
 #[get("/api/v1/conversations?<max_id>&<since_id>&<min_id>&<limit>")]
 pub async fn conversations(
-    config: &rocket::State<AppConfig>, max_id: Option<String>, since_id: Option<String>,
+    _config: &rocket::State<AppConfig>, max_id: Option<String>, since_id: Option<String>,
     min_id: Option<String>, limit: Option<u64>, user: super::oauth::TokenClaims,
     localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::Conversation>>, super::Error> {
@@ -16,9 +16,9 @@ pub async fn conversations(
     Ok(rocket::serde::json::Json(vec![]))
 }
 
-#[delete("/api/v1/conversations/<id>")]
+#[delete("/api/v1/conversations/<_id>")]
 pub async fn delete_conversation(
-    config: &rocket::State<AppConfig>, id: &str, user: super::oauth::TokenClaims,
+    _config: &rocket::State<AppConfig>, _id: &str, user: super::oauth::TokenClaims,
     localizer: crate::i18n::Localizer,
 ) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("write:conversations") {
@@ -34,9 +34,9 @@ pub async fn delete_conversation(
     })
 }
 
-#[post("/api/v1/conversations/<id>/read")]
+#[post("/api/v1/conversations/<_id>/read")]
 pub async fn read_conversation(
-    config: &rocket::State<AppConfig>, id: &str, user: super::oauth::TokenClaims,
+    _config: &rocket::State<AppConfig>, _id: &str, user: super::oauth::TokenClaims,
     localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<()>, super::Error> {
     if !user.has_scope("write:conversations") {

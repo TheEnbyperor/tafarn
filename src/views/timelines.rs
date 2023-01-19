@@ -77,7 +77,7 @@ pub async fn timeline_home(
 
 #[get("/api/v1/timelines/tag/<hashtag>?<any>&<all>&<none>&<local>&<remote>&<only_media>&<max_id>&<since_id>&<min_id>&<limit>")]
 pub async fn timeline_hashtag(
-    config: &rocket::State<crate::AppConfig>, hashtag: &str, any: Option<Vec<&str>>, all: Option<Vec<&str>>,
+    _config: &rocket::State<crate::AppConfig>, hashtag: &str, any: Option<Vec<&str>>, all: Option<Vec<&str>>,
     none: Option<Vec<&str>>, local: Option<&str>, remote: Option<&str>,
     only_media: Option<&str>, max_id: Option<String>, since_id: Option<i32>,
     min_id: Option<String>, limit: Option<u64>, localizer: crate::i18n::Localizer

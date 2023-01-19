@@ -272,7 +272,6 @@ async fn fetch_attachment(attachment: activity_streams::ReferenceOrObject<activi
                         (None, None)
                     }
                 }
-                _ => (None, None)
             }
         };
 
@@ -1145,7 +1144,7 @@ pub fn as_render_status(
             ]))
         }),
         attachment: activity_streams::Pluralisable::List(attachments.into_iter()
-            .map(|(a, m)| activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
+            .map(|(_, m)| activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ObjectOrLink::Object(
                 activity_streams::Object::Document(activity_streams::ObjectCommon {
                     url: m.file.map(|f| activity_streams::URLOrLink::URL(format!("https://{}/media/{}", config.uri, f))),
                     summary: m.description,

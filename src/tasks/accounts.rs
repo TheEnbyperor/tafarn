@@ -303,7 +303,7 @@ async fn _update_account(
 
             Ok(Some(new_account))
         }
-        o => Ok(None)
+        _ => Ok(None)
     }
 }
 

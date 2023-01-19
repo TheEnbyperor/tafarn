@@ -367,12 +367,12 @@ pub async fn update_credentials(
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
             })
-        }).map_err(|e| super::Error {
+        }).map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")
         })?;
         image_r.set_format(format);
-        let mut image = image_r.decode().map_err(|e| super::Error {
+        let mut image = image_r.decode().map_err(|_| super::Error {
             code: rocket::http::Status::UnprocessableEntity,
             error: fl!(localizer, "failed-to-decode-image")
         })?;
@@ -419,12 +419,12 @@ pub async fn update_credentials(
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
             })
-        }).map_err(|e| super::Error {
+        }).map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")
         })?;
         image_r.set_format(format);
-        let mut image = image_r.decode().map_err(|e| super::Error {
+        let mut image = image_r.decode().map_err(|_| super::Error {
             code: rocket::http::Status::UnprocessableEntity,
             error: fl!(localizer, "failed-to-decode-image")
         })?;
@@ -790,8 +790,7 @@ async fn render_relationship<'a>(
 
 #[get("/api/v1/accounts/relationships?<id>")]
 pub async fn relationships(
-    db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    id: Vec<String>, localizer: crate::i18n::Localizer
+    db: crate::DbConn, user: super::oauth::TokenClaims, id: Vec<String>, localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::Relationship>>, super::Error> {
     if !user.has_scope("read:follows") {
         return Err(super::Error {

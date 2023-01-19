@@ -344,6 +344,7 @@ pub async fn update_media(
             error: fl!(localizer, "internal-server-error")
         })?;
 
+        media.preview_file = Some(preview_image_name);
         media.preview_content_type = Some(thumbnail.content_type().unwrap().to_string());
         let (width, height) = image.dimensions();
         media.preview_width = Some(width as i32);

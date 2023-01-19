@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tafarn-conf
+  namespace: toot
+data:
+  IDENT: "false"
+  URI: "tafarn.glauca.space"
+  VAPID_KEY: "/keys/vapid_key.pem"
+  AS_KEY: "/keys/as_key.pem"
+  MEDIA_PATH: "/media"
+  LIMITS: "{data-form = \"250MiB\", file = \"250MiB\"}"

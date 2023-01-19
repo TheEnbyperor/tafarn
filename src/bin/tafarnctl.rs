@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-
 use rocket_sync_db_pools::Poolable;
 use clap::{Parser, Subcommand};
 
@@ -33,7 +30,7 @@ async fn main() {
     let cli = Cli::parse();
 
     let app = tafarn::setup().await;
-    let db_pool = diesel::PgConnection::pool("db", &app.rocket).unwrap();
+    // let db_pool = diesel::PgConnection::pool("db", &app.rocket).unwrap();
 
     match cli.command {
         Commands::RefreshProfile { uri, no_graph } => {

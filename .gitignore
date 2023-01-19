@@ -122,3 +122,4 @@ as_key.pem
 vapid_key.pem
 /media
 .DS_Store
+/kube/secrets.yaml
