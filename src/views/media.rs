@@ -1,5 +1,6 @@
 use diesel::prelude::*;
 use image::GenericImageView;
+use std::os::unix::fs::PermissionsExt;
 
 pub struct Focus(f64, f64);
 
@@ -106,7 +107,12 @@ pub async fn upload_media(
                 }
             })?;
 
-            thumbnail.move_copy_to(preview_image_path).await.map_err(|_| super::Error {
+            thumbnail.move_copy_to(&preview_image_path).await.map_err(|_| super::Error {
+                code: rocket::http::Status::InternalServerError,
+                error: fl!(localizer, "internal-server-error")
+            })?;
+            let permissions = std::fs::Permissions::from_mode(0o644);
+            std::fs::set_permissions(&preview_image_path, perms).map_err(|_| super::Error {
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
             })?;
@@ -131,7 +137,12 @@ pub async fn upload_media(
         }
     };
 
-    form.file.move_copy_to(image_path).await.map_err(|_| super::Error {
+    form.file.move_copy_to(&image_path).await.map_err(|_| super::Error {
+        code: rocket::http::Status::InternalServerError,
+        error: fl!(localizer, "internal-server-error")
+    })?;
+    let permissions = std::fs::Permissions::from_mode(0o644);
+    std::fs::set_permissions(&image_path, perms).map_err(|_| super::Error {
         code: rocket::http::Status::InternalServerError,
         error: fl!(localizer, "internal-server-error")
     })?;
@@ -339,7 +350,12 @@ pub async fn update_media(
         })?;
 
         let (preview_image_name, preview_image_path) = crate::gen_media_path(&config.media_path, "png");
-        thumbnail.move_copy_to(preview_image_path).await.map_err(|_| super::Error {
+        thumbnail.move_copy_to(&preview_image_path).await.map_err(|_| super::Error {
+            code: rocket::http::Status::InternalServerError,
+            error: fl!(localizer, "internal-server-error")
+        })?;
+        let permissions = std::fs::Permissions::from_mode(0o644);
+        std::fs::set_permissions(&preview_image_path, perms).map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")
         })?;

@@ -82,3 +82,88 @@ spec:
           ]
           securityContext:
             privileged: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tafarn-tasks
+  namespace: toot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tafarn
+      part: tasks
+  template:
+    metadata:
+      annotations:
+        cni.projectcalico.org/ipv6pools: "[\"default-ipv6-ippool\"]"
+      labels:
+        app: tafarn
+        part: tasks
+    spec:
+      volumes:
+        - name: conf
+          configMap:
+            name: tafarn-conf
+        - name: keys
+          secret:
+            secretName: tafarn-keys
+        - name: media
+          persistentVolumeClaim:
+            claimName: tafarn-media
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: frontend
+          image: theenbyperor/tafarn:(version)
+          imagePullPolicy: IfNotPresent
+          command:
+            - "/tafarn/tasks"
+          env:
+            - name: RUST_BACKTRACE
+              value: "full"
+            - name: RUST_LOG
+              value: INFO
+            - name: ROCKET_ENV
+              value: production
+            - name: ROCKET_PORT
+              value: "80"
+            - name: ROCKET_ADDRESS
+              value: "::"
+          envFrom:
+            - prefix: "ROCKET_"
+              configMapRef:
+                name: tafarn-conf
+            - prefix: "ROCKET_"
+              secretRef:
+                name: tafarn-oidc
+            - prefix: "ROCKET_"
+              secretRef:
+                name: tafarn-celery
+            - prefix: "ROCKET_"
+              secretRef:
+                name: tafarn-secrets
+            - prefix: "ROCKET_"
+              secretRef:
+                name: tafarn-db
+          volumeMounts:
+            - mountPath: "/media"
+              name: media
+            - mountPath: "/keys"
+              name: keys
+            - mountPath: "/tafarn/Rocket.toml"
+              name: conf
+              subPath: "Rocket.toml"
+          ports:
+            - containerPort: 80
+        - name: clatd
+          image: as207960/clatd
+          command: [
+            "/bin/bash", "-c",
+            "/clatd/clatd clat-v6-addr=fd2e:ae7d:58e3:f6ab::1 v4-conncheck-enable=no 'script-up=ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE'"
+          ]
+          securityContext:
+            privileged: true
