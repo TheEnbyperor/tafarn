@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tafarn-nginx
+  namespace: toot
+  labels:
+    app: tafarn
+    part: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tafarn
+      part: nginx
+  template:
+    metadata:
+      annotations:
+        cni.projectcalico.org/ipv6pools: "[\"default-ipv6-ippool\"]"
+      labels:
+        app: tafarn
+        part: nginx
+    spec:
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: tafarn-media
+        - name: conf
+          configMap:
+            name: tafarn-nginx-conf
+      containers:
+        - name: nginx
+          image: nginx
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - mountPath: "/media"
+              name: media
+            - mountPath: "/etc/nginx/nginx.conf"
+              name: conf
+              subPath: "nginx.conf"

@@ -78,7 +78,7 @@ table! {
 table! {
     accounts (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         actor -> Nullable<Varchar>,
         username -> Varchar,
         display_name -> Varchar,
@@ -156,7 +156,7 @@ table! {
 table! {
     following (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         follower -> Uuid,
         followee -> Uuid,
         created_at -> Timestamp,
@@ -169,7 +169,7 @@ table! {
 table! {
     notifications (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         notification_type -> Varchar,
         account -> Uuid,
         cause -> Uuid,
@@ -203,7 +203,7 @@ table! {
 table! {
     statuses (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         url -> Varchar,
         uri -> Nullable<Varchar>,
         text -> Varchar,
@@ -247,7 +247,7 @@ table! {
 
 table! {
     home_timeline (id) {
-        id -> Int4,
+        id -> Int8,
         account_id -> Uuid,
         status_id -> Uuid,
     }
@@ -255,7 +255,7 @@ table! {
 
 table! {
     public_timeline (id) {
-        id -> Int4,
+        id -> Int8,
         status_id -> Uuid,
     }
 }
@@ -263,7 +263,7 @@ table! {
 table! {
     likes (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         status -> Nullable<Uuid>,
         account -> Uuid,
         created_at -> Timestamp,
@@ -276,7 +276,7 @@ table! {
 table! {
     bookmarks (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         status -> Uuid,
         account -> Uuid,
     }
@@ -285,7 +285,7 @@ table! {
 table! {
     pins (id) {
         id -> Uuid,
-        iid -> Int4,
+        iid -> Int8,
         status -> Uuid,
         account -> Uuid,
     }

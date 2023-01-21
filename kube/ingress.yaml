@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tafarn-ingress
+  namespace: toot
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+spec:
+  tls:
+    - hosts:
+        - tafarn.glauca.space
+      secretName: tafarn-tls
+  rules:
+    - host: tafarn.glauca.space
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tafarn-nginx
+                port:
+                  number: 80

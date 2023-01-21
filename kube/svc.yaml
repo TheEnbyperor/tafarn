@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tafarn-frontend
+  namespace: toot
+  labels:
+    app: tafarn
+    part: frontend
+spec:
+  selector:
+    app: tafarn
+    part: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tafarn-nginx
+  namespace: toot
+  labels:
+    app: tafran
+    part: nginx
+spec:
+  selector:
+    app: tafarn
+    part: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http

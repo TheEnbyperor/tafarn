@@ -81,7 +81,7 @@ pub struct OAuthTokenScopes {
 #[table_name="accounts"]
 pub struct Account {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub actor: Option<String>,
     pub username: String,
     pub display_name: String,
@@ -217,7 +217,7 @@ pub struct PublicKey {
 #[table_name="following"]
 pub struct Following {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub follower: uuid::Uuid,
     pub followee: uuid::Uuid,
     pub created_at: chrono::NaiveDateTime,
@@ -242,7 +242,7 @@ pub struct NewFollowing {
 #[table_name="notifications"]
 pub struct Notification {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub notification_type: String,
     pub account: uuid::Uuid,
     pub cause: uuid::Uuid,
@@ -287,7 +287,7 @@ pub struct Media {
 #[table_name="statuses"]
 pub struct Status {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub url: String,
     pub uri: Option<String>,
     pub text: String,
@@ -379,7 +379,7 @@ pub struct StatusAudience {
 #[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
 #[table_name="home_timeline"]
 pub struct HomeTimelineEntry {
-    pub id: i32,
+    pub id: i64,
     pub account_id: uuid::Uuid,
     pub status_id: uuid::Uuid,
 }
@@ -394,7 +394,7 @@ pub struct NewHomeTimelineEntry {
 #[derive(Queryable, Identifiable, AsChangeset, Serialize, Deserialize, Clone, Debug)]
 #[table_name="public_timeline"]
 pub struct PublicTimelineEntry {
-    pub id: i32,
+    pub id: i64,
     pub status_id: uuid::Uuid,
 }
 
@@ -408,7 +408,7 @@ pub struct NewPublicTimelineEntry {
 #[table_name="likes"]
 pub struct Like {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub status: Option<uuid::Uuid>,
     pub account: uuid::Uuid,
     pub created_at: chrono::NaiveDateTime,
@@ -443,7 +443,7 @@ pub struct NewLike {
 #[table_name="bookmarks"]
 pub struct Bookmark {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub status: uuid::Uuid,
     pub account: uuid::Uuid,
 }
@@ -460,7 +460,7 @@ pub struct NewBookmark {
 #[table_name="pins"]
 pub struct Pin {
     pub id: uuid::Uuid,
-    pub iid: i32,
+    pub iid: i64,
     pub status: uuid::Uuid,
     pub account: uuid::Uuid,
 }
