@@ -36,14 +36,12 @@ spec:
           image: theenbyperor/tafarn:(version)
           imagePullPolicy: IfNotPresent
           command:
-            - "/bin/sh"
-            - "-c"
-            - "sleep 15; /tafarn/frontend"
+            - "/tafarn/frontend"
           env:
             - name: RUST_BACKTRACE
               value: "full"
             - name: RUST_LOG
-              value: TRACE
+              value: INFO
             - name: ROCKET_ENV
               value: production
             - name: ROCKET_PORT
@@ -63,6 +61,9 @@ spec:
             - prefix: "ROCKET_"
               secretRef:
                 name: tafarn-secrets
+            - prefix: "ROCKET_"
+              secretRef:
+                name: tafarn-db
           volumeMounts:
             - mountPath: "/media"
               name: media

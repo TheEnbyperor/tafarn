@@ -4,7 +4,7 @@ CREATE TABLE oauth_codes
     time         TIMESTAMP                 NOT NULL,
     redirect_uri TEXT                      NOT NULL,
     client_id    UUID REFERENCES apps (id) ON DELETE CASCADE NOT NULL,
-    user_id      TEXT                      NOT NULL,
+    user_id      TEXT                      NOT NULL
 );
 
 CREATE TABLE oauth_code_scopes
