@@ -40,7 +40,7 @@ async fn main() -> Result<(), rocket::Error> {
         vapid_key: app.vapid_key,
         web_push_client: std::sync::Arc::new(web_push_old::WebPushClient::new()),
         as_key: std::sync::Arc::new(app.as_key),
-        media_path: std::sync::Arc::new(app.media_path)
+        media_path: std::sync::Arc::new(app.media_path.clone())
     });
 
     let _ = app.rocket
@@ -52,7 +52,7 @@ async fn main() -> Result<(), rocket::Error> {
         }))
         .manage(app.celery_app)
         .mount("/static", rocket::fs::FileServer::from("./static"))
-        .mount("/media", rocket::fs::FileServer::from("./media"))
+        .mount("/media", rocket::fs::FileServer::from(app.media_path))
         .mount("/", rocket::routes![
             all_options,
 
