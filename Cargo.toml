@@ -47,7 +47,7 @@ web-push = "0.9"
 pkcs8 = "0.7"
 p256 = "0.10"
 lazy_static = "1"
-reqwest = { version = "0.11", features = ["json", "trust-dns"] }
+reqwest = { version = "0.11", features = ["json"] }
 r2d2 = "0.8"
 md5 = "0.7"
 sha1 = "0.10"

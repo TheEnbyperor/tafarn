@@ -62,7 +62,6 @@ lazy_static! {
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(15))
             .http1_title_case_headers()
-            .trust_dns(true)
             .https_only(true)
             .build().unwrap()
     };

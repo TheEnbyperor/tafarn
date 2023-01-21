@@ -27,13 +27,23 @@ spec:
         - name: media
           persistentVolumeClaim:
             claimName: tafarn-media
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       containers:
         - name: frontend
           image: theenbyperor/tafarn:(version)
           imagePullPolicy: IfNotPresent
+          command:
+            - "/bin/sh"
+            - "-c"
+            - "sleep 15; /tafarn/frontend"
           env:
+            - name: RUST_BACKTRACE
+              value: "full"
             - name: RUST_LOG
-              value: INFO
+              value: TRACE
             - name: ROCKET_ENV
               value: production
             - name: ROCKET_PORT
@@ -63,3 +73,11 @@ spec:
               subPath: "Rocket.toml"
           ports:
             - containerPort: 80
+        - name: clatd
+          image: as207960/clatd
+          command: [
+            "/bin/bash", "-c",
+            "/clatd/clatd clat-v6-addr=fd2e:ae7d:58e3:f6ab::1 v4-conncheck-enable=no 'script-up=ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE'"
+          ]
+          securityContext:
+            privileged: true
