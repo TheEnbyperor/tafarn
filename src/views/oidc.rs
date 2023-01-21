@@ -205,7 +205,7 @@ impl OIDCApplication {
             openidconnect::reqwest::async_http_client,
         ).await.map_err(|err| {
             match err {
-                openidconnect::DiscoveryError::Request(err) => format!("Unable to retrieve provider metadata: {}", err),
+                openidconnect::DiscoveryError::Request(err) => format!("Unable to retrieve provider metadata: {:?}", err),
                 err => format!("Unable to retrieve provider metadata: {}", err),
             }
         })?;

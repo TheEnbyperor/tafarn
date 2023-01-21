@@ -29,7 +29,7 @@ spec:
             claimName: tafarn-media
       containers:
         - name: frontend
-          image: theenbyperor/tafarn:5da4af4b4bdc76640e1ea7752e8f8336333cae3f
+          image: theenbyperor/tafarn:(version)
           imagePullPolicy: IfNotPresent
           env:
             - name: RUST_LOG

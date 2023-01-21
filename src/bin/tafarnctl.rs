@@ -1,4 +1,3 @@
-use rocket_sync_db_pools::Poolable;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
