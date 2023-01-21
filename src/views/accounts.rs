@@ -487,7 +487,7 @@ pub async fn update_credentials(
 }
 
 async fn get_account_from_db(account_id: &str, db: &crate::DbConn, localizer: &crate::i18n::Localizer) -> Result<models::Account, super::Error> {
-    let account_id = match account_id.parse::<i32>() {
+    let account_id = match account_id.parse::<i64>() {
         Ok(id) => id,
         Err(_) => return Err(super::Error {
             code: rocket::http::Status::NotFound,
@@ -526,7 +526,7 @@ pub async fn account_statuses(
     user: Option<super::oauth::TokenClaims>,
     limit: Option<u64>, exclude_replies: Option<&str>, only_media: Option<&str>,
     exclude_reblogs: Option<&str>, pinned: Option<&str>,
-    max_id: Option<i32>, min_id: Option<i32>,
+    max_id: Option<i64>, min_id: Option<i64>,
     host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     let account = get_account_from_db(&account_id, &db, &localizer).await?;
@@ -625,7 +625,7 @@ pub async fn account_statuses(
 #[get("/api/v1/accounts/<account_id>/followers?<limit>&<min_id>&<max_id>")]
 pub async fn account_followers(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, account_id: String,
-    limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
+    limit: Option<u64>, min_id: Option<i64>, max_id: Option<i64>, host: &rocket::http::uri::Host<'_>,
     localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, super::Error> {
     let account = get_account_from_db(&account_id, &db, &localizer).await?;
@@ -800,7 +800,7 @@ pub async fn relationships(
     }
 
     let ids = match id.into_iter()
-        .map(|id| id.parse::<i32>())
+        .map(|id| id.parse::<i64>())
         .collect::<Result<Vec<_>, _>>() {
         Ok(id) => id,
         Err(_) => return Err(super::Error {

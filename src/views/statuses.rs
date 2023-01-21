@@ -222,7 +222,7 @@ pub async fn get_status_and_check_visibility(
     status_id: &str, account: Option<&models::Account>,
     db: &crate::DbConn, localizer: &crate::i18n::Localizer
 ) -> Result<models::Status, super::Error> {
-    let status_id = match status_id.parse::<i32>() {
+    let status_id = match status_id.parse::<i64>() {
         Ok(id) => id,
         Err(_) => return Err(super::Error {
             code: rocket::http::Status::NotFound,
@@ -293,7 +293,7 @@ pub struct StatusJson<'a> {
 pub struct CreateStatus<'a> {
     status: Option<&'a str>,
     media_ids: Vec<uuid::Uuid>,
-    in_reply_to_id: Option<i32>,
+    in_reply_to_id: Option<i64>,
     sensitive: Option<bool>,
     spoiler_text: Option<&'a str>,
     language: Option<&'a str>,
@@ -310,7 +310,7 @@ impl<'a> CreateStatus<'a> {
                 code: rocket::http::Status::UnprocessableEntity,
                 error: fl!(localizer, "error-media-not-found")
             })?,
-            in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i32>())
+            in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i64>())
                 .transpose().map_err(|_| super::Error {
                 code: rocket::http::Status::UnprocessableEntity,
                 error: fl!(localizer, "error-status-not-found")
@@ -344,7 +344,7 @@ impl<'a> CreateStatus<'a> {
                 code: rocket::http::Status::UnprocessableEntity,
                 error: fl!(localizer, "error-media-not-found")
             })?,
-            in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i32>())
+            in_reply_to_id: value.in_reply_to_id.map(|x| x.parse::<i64>())
                 .transpose().map_err(|_| super::Error {
                 code: rocket::http::Status::UnprocessableEntity,
                 error: fl!(localizer, "error-status-not-found")
@@ -654,7 +654,7 @@ pub async fn status_context(
 pub async fn status_boosted_by(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
     user: Option<super::oauth::TokenClaims>, status_id: String,
-    limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
+    limit: Option<u64>, min_id: Option<i64>, max_id: Option<i64>, host: &rocket::http::uri::Host<'_>,
     localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, super::Error> {
     if let Some(user) = &user {
@@ -728,7 +728,7 @@ pub async fn status_boosted_by(
 pub async fn status_liked_by(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>,
     user: Option<super::oauth::TokenClaims>, status_id: String,
-    limit: Option<u64>, min_id: Option<i32>, max_id: Option<i32>, host: &rocket::http::uri::Host<'_>,
+    limit: Option<u64>, min_id: Option<i64>, max_id: Option<i64>, host: &rocket::http::uri::Host<'_>,
     localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Account>>>, super::Error> {
     if let Some(user) = &user {

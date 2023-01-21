@@ -4,7 +4,7 @@ use futures::StreamExt;
 #[get("/api/v1/timelines/home?<max_id>&<since_id>&<min_id>&<limit>")]
 pub async fn timeline_home(
     config: &rocket::State<crate::AppConfig>, db: crate::DbConn, user: super::oauth::TokenClaims,
-    max_id: Option<i32>, since_id: Option<i32>, min_id: Option<i32>,
+    max_id: Option<i64>, since_id: Option<i64>, min_id: Option<i64>,
     limit: Option<u64>, host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     if !user.has_scope("read:statuses") {
@@ -79,7 +79,7 @@ pub async fn timeline_home(
 pub async fn timeline_hashtag(
     _config: &rocket::State<crate::AppConfig>, hashtag: &str, any: Option<Vec<&str>>, all: Option<Vec<&str>>,
     none: Option<Vec<&str>>, local: Option<&str>, remote: Option<&str>,
-    only_media: Option<&str>, max_id: Option<String>, since_id: Option<i32>,
+    only_media: Option<&str>, max_id: Option<String>, since_id: Option<i64>,
     min_id: Option<String>, limit: Option<u64>, localizer: crate::i18n::Localizer
 ) -> Result<rocket::serde::json::Json<Vec<super::objs::Status>>, super::Error> {
     let _local = super::parse_bool(local, false, &localizer)?;
@@ -93,7 +93,7 @@ pub async fn timeline_hashtag(
 pub async fn timeline_public(
     config: &rocket::State<crate::AppConfig>, db: crate::DbConn, user: Option<super::oauth::TokenClaims>,
     local: Option<&str>, remote: Option<&str>, only_media: Option<&str>,
-    max_id: Option<i32>, since_id: Option<i32>, min_id: Option<i32>, limit: Option<u64>,
+    max_id: Option<i64>, since_id: Option<i64>, min_id: Option<i64>, limit: Option<u64>,
     host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     let local = super::parse_bool(local, false, &localizer)?;

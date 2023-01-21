@@ -5,7 +5,7 @@ use crate::models;
 #[get("/api/v1/bookmarks?<limit>&<min_id>&<max_id>")]
 pub async fn bookmarks(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    limit: Option<u64>, max_id: Option<i32>, min_id: Option<i32>,
+    limit: Option<u64>, max_id: Option<i64>, min_id: Option<i64>,
     host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Status>>>, super::Error> {
     if !user.has_scope("read:bookmarks") {

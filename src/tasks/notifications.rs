@@ -8,7 +8,7 @@ struct NotificationData {
     body: String,
     preferred_locale: String,
     access_token: String,
-    notification_id: i32,
+    notification_id: i64,
     notification_type: String,
     icon: Option<String>,
 }

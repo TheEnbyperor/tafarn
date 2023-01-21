@@ -33,7 +33,7 @@ pub async fn render_notification(
 #[get("/api/v1/notifications?<limit>&<types>&<exclude_types>&<account_id>&<min_id>&<max_id>")]
 pub async fn notifications(
     db: crate::DbConn, config: &rocket::State<crate::AppConfig>, user: super::oauth::TokenClaims,
-    min_id: Option<i32>, max_id: Option<i32>, limit: Option<u64>,
+    min_id: Option<i64>, max_id: Option<i64>, limit: Option<u64>,
     types: Option<Vec<String>>, exclude_types: Option<Vec<String>>,
     account_id: Option<String>, host: &rocket::http::uri::Host<'_>, localizer: crate::i18n::Localizer
 ) -> Result<super::LinkedResponse<rocket::serde::json::Json<Vec<super::objs::Notification>>>, super::Error> {
@@ -115,7 +115,7 @@ pub async fn notifications(
 async fn get_notification_and_check_visibility(
     notification_id: &str, account: &models::Account, db: &crate::DbConn, localizer: &crate::i18n::Localizer
 ) -> Result<models::Notification, super::Error> {
-    let notification_id = match notification_id.parse::<i32>() {
+    let notification_id = match notification_id.parse::<i64>() {
         Ok(id) => id,
         Err(_) => return Err(super::Error {
             code: rocket::http::Status::NotFound,
