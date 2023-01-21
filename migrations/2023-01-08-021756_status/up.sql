@@ -17,8 +17,8 @@ CREATE TABLE statuses (
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     deleted_at TIMESTAMP NULL,
     edited_at TIMESTAMP NULL,
-    public BOOLEAN NOT NULL DEFAULT FALSE,
-    visible BOOLEAN NOT NULL DEFAULT TRUE
+    "public" BOOLEAN NOT NULL DEFAULT FALSE,
+    "visible" BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 CREATE INDEX statuses_iid_idx ON statuses (iid);
