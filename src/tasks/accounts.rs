@@ -640,7 +640,7 @@ pub fn render_account(account: &models::Account) -> TaskResult<activity_streams:
         discoverable: account.discoverable,
         common: activity_streams::ObjectCommon {
             id: Some(account.actor_id(&config.uri)),
-            name: Some(account.username.clone()),
+            name: Some(account.display_name.clone()),
             published: Some(Utc.from_local_datetime(&account.created_at).unwrap()),
             url: Some(activity_streams::URLOrLink::URL(format!("https://{}/users/{}", config.uri, account.id))),
             icon: Some(activity_streams::ReferenceOrObject::Object(Box::new(activity_streams::ImageOrLink::Image(
