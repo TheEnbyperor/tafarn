@@ -111,7 +111,7 @@ pub async fn upload_media(
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
             })?;
-            let permissions = std::fs::Permissions::from_mode(0o644);
+            let perms = std::fs::Permissions::from_mode(0o644);
             std::fs::set_permissions(&preview_image_path, perms).map_err(|_| super::Error {
                 code: rocket::http::Status::InternalServerError,
                 error: fl!(localizer, "internal-server-error")
@@ -141,7 +141,7 @@ pub async fn upload_media(
         code: rocket::http::Status::InternalServerError,
         error: fl!(localizer, "internal-server-error")
     })?;
-    let permissions = std::fs::Permissions::from_mode(0o644);
+    let perms = std::fs::Permissions::from_mode(0o644);
     std::fs::set_permissions(&image_path, perms).map_err(|_| super::Error {
         code: rocket::http::Status::InternalServerError,
         error: fl!(localizer, "internal-server-error")
@@ -354,7 +354,7 @@ pub async fn update_media(
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")
         })?;
-        let permissions = std::fs::Permissions::from_mode(0o644);
+        let perms = std::fs::Permissions::from_mode(0o644);
         std::fs::set_permissions(&preview_image_path, perms).map_err(|_| super::Error {
             code: rocket::http::Status::InternalServerError,
             error: fl!(localizer, "internal-server-error")

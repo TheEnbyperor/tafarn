@@ -41,6 +41,8 @@ data:
 
       upstream backend {
         server tafarn-frontend:80 fail_timeout=0;
+    
+        keepalive 64;
       }
     
       proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=CACHE:10m inactive=7d max_size=1g;
@@ -80,6 +82,9 @@ data:
           proxy_cache_valid 410 24h;
           proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
           add_header X-Cached $upstream_cache_status;
+          add_header Cache-Control 'private, no-store';
+          expires off;
+          etag off;
 
           tcp_nodelay on;
         }
