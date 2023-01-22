@@ -353,8 +353,6 @@ async fn _update_status(
                 .filter_map(|t| resolve_object_or_link(t))
                 .collect::<Vec<_>>().await;
 
-            println!("{:?}", tags);
-
             let summary = o.summary.as_deref()
                 .map(|s| {
                     sanitize_html::sanitize_str(&crate::HTML_RULES, s)
