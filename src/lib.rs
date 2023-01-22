@@ -277,7 +277,7 @@ pub async fn setup() -> App {
             tasks::statuses::get_replies,
         ],
         task_routes = [],
-        prefetch_count = 0,
+        prefetch_count = 5,
         acks_late = false,
         task_max_retries = 25,
         task_min_retry_delay = 30,
