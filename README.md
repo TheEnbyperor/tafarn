@@ -46,6 +46,7 @@ Tafarn uses the Fluent localization system. To add a new language copy the `en-G
 Currently supported languages are:
 - English (en-GB)
 - Welsh (cy)
+- Dutch (nl-NL); thanks [flimpie](https://flimpie.net/@flimpie).
 
 ## ActivityPub implementation status
 
