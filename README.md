@@ -47,6 +47,7 @@ Currently supported languages are:
 - English (en-GB)
 - Welsh (cy)
 - Dutch (nl-NL); thanks [flimpie](https://flimpie.net/@flimpie).
+- Russian (ru-RU); thanks [Сергей Ворон](https://github.com/vorons).
 
 ## ActivityPub implementation status
 
